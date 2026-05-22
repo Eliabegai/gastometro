@@ -26,6 +26,11 @@ import pandas as pd
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from categorias import (
+    CATEGORIAS_USUARIO_ARQUIVO,
+    categorizar_pelo_dicionario,
+    salvar_categorias_usuario,
+)
 from parsers import Fatura, extrair_fatura
 from parsers.base import MES_POR_NUMERO
 
@@ -354,9 +359,95 @@ def processar(pdfs: Iterable[Path], destino: Path) -> None:
     if ignorados:
         print(f"  Ignoradas (já no Excel): {len(ignorados)}.")
 
+    _imprimir_top_outros_gastos(df_transacoes_final)
+
+
+def _imprimir_top_outros_gastos(df_transacoes: pd.DataFrame, top_n: int = 10) -> None:
+    """Imprime as descrições mais frequentes que caíram em `Outros Gastos`,
+    ordenadas pelo valor total. Ajuda a evoluir o dicionário/overrides."""
+    if df_transacoes is None or df_transacoes.empty:
+        return
+    if "Categoria" not in df_transacoes.columns or "Descrição" not in df_transacoes.columns:
+        return
+
+    outros = df_transacoes[
+        (df_transacoes["Categoria"] == "Outros Gastos")
+        & (df_transacoes["Valor (R$)"] > 0)
+    ]
+    if outros.empty:
+        return
+
+    agregado = (
+        outros.groupby("Descrição")["Valor (R$)"]
+        .agg(soma="sum", n="count")
+        .reset_index()
+        .sort_values("soma", ascending=False)
+        .head(top_n)
+    )
+
+    print(
+        f"\nTop {len(agregado)} descrições em 'Outros Gastos' "
+        f"(acumulado no Excel):"
+    )
+    for _, linha in agregado.iterrows():
+        print(
+            f"  R$ {linha['soma']:9.2f}  ({int(linha['n']):2d}x)  "
+            f"{linha['Descrição']}"
+        )
+    print(
+        "  Para categorizar: edite `categorias.py` (regra geral) ou rode "
+        "`python extrator.py aprender` depois de ajustar a coluna "
+        "`Categoria` no Excel (override individual)."
+    )
+
+
+def aprender_do_excel(caminho: Path) -> None:
+    """Lê o Excel acumulativo e registra em `categorias_usuario.json` cada
+    descrição cuja categoria salva difere do que o dicionário fixo
+    devolveria. Útil quando o usuário corrigiu categorias manualmente no
+    Excel e quer que essas correções valham para futuras execuções."""
+    if not caminho.exists():
+        print(f"Excel não encontrado: {caminho}")
+        sys.exit(1)
+
+    df = pd.read_excel(caminho, sheet_name="Transações")
+    if df.empty or "Descrição" not in df.columns or "Categoria" not in df.columns:
+        print(f"Aba 'Transações' vazia ou sem as colunas esperadas em {caminho}.")
+        sys.exit(1)
+
+    overrides: dict[str, str] = {}
+    for _, linha in df.iterrows():
+        desc = str(linha.get("Descrição", "")).strip()
+        cat = str(linha.get("Categoria", "")).strip()
+        if not desc or not cat:
+            continue
+        if categorizar_pelo_dicionario(desc) != cat:
+            overrides[desc] = cat
+
+    qtd = salvar_categorias_usuario(overrides)
+    print(
+        f"Aprendizado concluído: {qtd} overrides salvos em "
+        f"{CATEGORIAS_USUARIO_ARQUIVO} (lidos de {caminho.name})."
+    )
+    if qtd == 0:
+        print(
+            "Nenhuma diferença encontrada entre o dicionário fixo e o "
+            "Excel — não há overrides para registrar."
+        )
+
 
 def main() -> None:
-    alvo = Path(sys.argv[1]).expanduser().resolve() if len(sys.argv) > 1 else None
+    argv = sys.argv[1:]
+    if argv and argv[0] == "aprender":
+        caminho = (
+            Path(argv[1]).expanduser().resolve()
+            if len(argv) > 1
+            else PASTA_SAIDA / ARQUIVO_SAIDA
+        )
+        aprender_do_excel(caminho)
+        return
+
+    alvo = Path(argv[0]).expanduser().resolve() if argv else None
     pdfs = _descobrir_pdfs(alvo)
     if not pdfs:
         sys.exit(1)

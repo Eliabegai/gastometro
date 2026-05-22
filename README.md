@@ -161,6 +161,37 @@ CATEGORIAS = {
 
 Transações que não casarem com nenhuma palavra-chave caem em **"Outros Gastos"**.
 
+### Top 'Outros Gastos' no terminal
+
+Ao final de cada execução, o extrator imprime as **10 descrições com maior
+valor acumulado que caíram em "Outros Gastos"**. Use essa lista para
+priorizar quais palavras-chave adicionar a `categorias.py`:
+
+```
+Top 10 descrições em 'Outros Gastos' (acumulado no Excel):
+  R$    287.24  ( 6x)  MAPFRE SEGUROS
+  R$    143.54  ( 1x)  MECANICA MAICON
+  ...
+```
+
+### Overrides por descrição (`categorias_usuario.json`)
+
+Para corrigir casos isolados sem inflar `categorias.py`, edite a coluna
+**Categoria** no Excel gerado, salve, e rode:
+
+```bash
+python extrator.py aprender
+```
+
+O extrator compara cada linha com o resultado do dicionário fixo e grava
+apenas as **diferenças** em `categorias_usuario.json` (na raiz, fora do
+git). Essas entradas têm precedência sobre o dicionário em todas as
+execuções futuras. A comparação ignora maiúsculas, acentos e espaços
+extras.
+
+> Cuidado: o JSON contém descrições brutas (que podem ter dados
+> sensíveis) e por isso está em `.gitignore`.
+
 ## Estrutura do projeto
 
 ```

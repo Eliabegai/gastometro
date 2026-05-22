@@ -27,4 +27,7 @@ Thumbs.db
 !exemplos/*.pdf
 !exemplos/*.xlsx
 
+# Overrides de categorização (podem conter descrições com dados sensíveis)
+categorias_usuario.json
+
 HANDOFF.md

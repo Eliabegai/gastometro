@@ -81,13 +81,11 @@
   - Considerar pesos ("quem casa mais palavras vence" em vez de "primeira que casa").
   - Permitir regras negativas ("posto" → Combustível, exceto se também contiver "vet" ou "saúde").
 
-- [ ] **2.3 — Aprendizado a partir do usuário** — P2 / M
-  - Criar `categorias_usuario.json` (não versionado), mapeando descrição normalizada → categoria.
-  - `categorizar()` consulta esse arquivo antes do dicionário fixo.
-  - Bônus: ler de volta um Excel já corrigido manualmente e auto-alimentar o arquivo.
+- [x] **2.3 — Aprendizado a partir do usuário** — P2 / M
+  - Concluído em 22/05/2026 (ver "Concluídas").
 
-- [ ] **2.4 — Visibilidade do "Outros Gastos"** — P2 / S
-  - No fim de cada execução, imprimir top-10 descrições não categorizadas (com valor agregado), pra evoluir o dicionário.
+- [x] **2.4 — Visibilidade do "Outros Gastos"** — P2 / S
+  - Concluído em 22/05/2026 (ver "Concluídas").
 
 ## 3. Testes automatizados
 
@@ -198,6 +196,40 @@
 ## Concluídas
 
 ### 22/05/2026
+
+- **2.3 + 2.4 — Aprendizado por descrição + visibilidade dos "Outros Gastos"**
+  - **2.3**: novo arquivo opcional `categorias_usuario.json` (na raiz,
+    fora do git) com mapa `descrição → categoria`. Em `categorias.py`:
+    - `_normalizar(texto)` aplica `unicodedata.NFD` para remover
+      acentos, baixa caixa e colapsa espaços (`"MAPFRE  Seguros"` e
+      `"mapfre seguros"` viram a mesma chave).
+    - `_carregar_categorias_usuario()` lê o JSON com `lru_cache`,
+      tolerando ausência ou JSON inválido (segue silencioso, item é
+      opcional).
+    - `categorizar()` consulta o override antes do dicionário fixo;
+      cai no `categorizar_pelo_dicionario()` quando não há match.
+    - `salvar_categorias_usuario(mapa)` persiste o JSON com chaves
+      já normalizadas e invalida o cache.
+  - **Comando `python extrator.py aprender [excel]`**: lê o Excel
+    (padrão `saida/gastometro.xlsx`) e registra como override apenas
+    as linhas cuja categoria salva difere do que o dicionário
+    devolveria. Sobrescreve o JSON anterior. Útil para reaproveitar
+    correções manuais que o usuário fez na coluna `Categoria` do
+    Excel sem precisar inflar `categorias.py`.
+  - **2.4**: `extrator.py::_imprimir_top_outros_gastos` lê o
+    `DataFrame` final de transações, filtra `Categoria == "Outros
+    Gastos"` com `Valor > 0` (ignora estornos), agrupa por descrição
+    e imprime as 10 com maior soma. Mostra também a contagem
+    (`N×`) e instruções de como categorizar.
+  - **Privacidade**: `categorias_usuario.json` entrou no `.gitignore`
+    (pode conter descrições com dados sensíveis).
+  - **Validação**: ciclo completo testado nos 33 PDFs reais. Edição
+    de 24 linhas do Excel (3 descrições distintas: `Localiza`,
+    `MP *AUTOELETRICAA`, `Google YouTubePremiu`) gerou 5 entradas
+    no JSON (graças à normalização) e, após apagar o Excel e
+    reprocessar, todas as 24 transações foram categorizadas
+    corretamente via override. As 3 descrições saíram do top-10 de
+    "Outros Gastos".
 
 - **1.8 — Divergências em faturas Nubank**
   - **`valor_total`**: agora `parsers/nubank.py::_extrair_metadata`
