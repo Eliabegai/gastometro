@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dados pessoais (faturas e planilhas geradas)
+# Use a pasta exemplos/ para PDFs e XLSX de teste públicos.
+*.pdf
+*.xlsx
+!exemplos/*.pdf
+!exemplos/*.xlsx
