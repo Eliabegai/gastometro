@@ -67,6 +67,19 @@
     apenas 3 avisos informativos sobre **estornos**, conforme detalhe
     na seção "Concluídas" abaixo.
 
+- [x] **1.9 — Parcela do Ailos vazando para a coluna Cidade** — P1 / XS
+  - Concluído em 22/05/2026 (ver "Concluídas").
+
+- [ ] **1.10 — Cidade truncada em algumas linhas Ailos (`DO JARAGUA DO`)** — P2 / S
+  - Quando a descrição é longa, o Ailos quebra o lançamento em **duas
+    linhas visuais** com `top` ~4pt de diferença (ex.: linha 1
+    "00401 SH JARAGUA DO" + linha 2 "11 NOV JARAGUA DO SU R$ 93.23").
+    `_agrupar_palavras_em_linhas` usa tolerância 3pt e separa as
+    duas → metade do nome da loja vai para `desc` e a outra metade
+    fica como "cidade" (`DO JARAGUA DO`).
+  - Subir a tolerância para ~5pt ou implementar um pós-merge das
+    linhas adjacentes do mesmo lançamento.
+
 ## 2. Categorização (`categorias.py`)
 
 - [ ] **2.1 — Duplicatas e conflitos no dicionário** — P2 / XS
@@ -196,6 +209,34 @@
 ## Concluídas
 
 ### 22/05/2026
+
+- **1.9 — Parcela do Ailos vazando para a coluna Cidade**
+  - `parsers/ailos.py::_classificar_palavras_em_colunas` aplicava
+    classificação puramente posicional: tokens com X dentro do
+    range da coluna `cidade` (limite_desc_cidade ≤ x <
+    limite_cidade_valor) viravam `cidade_tokens`, **mesmo sendo
+    indicadores de parcela** (`NN/MM`). O `_montar_transacoes`, por
+    sua vez, só procurava parcela na descrição, então a parcela
+    nunca era detectada e ficava grudada na cidade (ex.: cidade
+    `'02/02 SAO PAULO'`).
+  - Fix: classificação semântica antes da posicional — qualquer
+    token que case `RE_PARCELA` (`^\d{1,2}/\d{1,2}$`) vai direto
+    para `desc_tokens`, independente do X. Seguro porque `NN/MM`
+    nunca aparece em data (`DD MMM`) ou valor (com `R$` ou só
+    dígitos com `,`/`.`).
+  - **Validação**: 15/15 Ailos seguem batendo total (delta R$ 0,00).
+    Faturas afetadas:
+    - `Fatura_01_2026.pdf`: MLP*NetshoesV agora com parc `02/02`
+      e cidade `SAO PAULO`.
+    - `Fatura_12_2025.pdf`: MLP*NetshoesV com parc `01/02`,
+      cidade `SAO PAULO`.
+    - 9 faturas tiveram aumento na contagem de parcelas detectadas
+      (totais inalterados).
+  - **Lateral encontrado e registrado em 1.10**: em algumas linhas
+    longas (ex.: `00401 SH JARAGUA DO ... SU`) o agrupamento por
+    `top` quebra a linha em duas (delta ~4pt > tolerância 3pt), e o
+    resultado é uma cidade truncada (`DO JARAGUA DO`). Não afeta
+    o total nem a parcela.
 
 - **2.3 + 2.4 — Aprendizado por descrição + visibilidade dos "Outros Gastos"**
   - **2.3**: novo arquivo opcional `categorias_usuario.json` (na raiz,

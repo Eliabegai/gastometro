@@ -173,6 +173,11 @@ def _classificar_palavras_em_colunas(linhas_palavras, colunas) -> list[_Linha]:
         for palavra in linha:
             x = palavra["x0"]
             texto = palavra["text"]
+
+            if RE_PARCELA.match(texto):
+                l.desc_tokens.append(texto)
+                continue
+
             if x < limite_data_desc:
                 l.data_tokens.append(texto)
             elif x < limite_desc_cidade:
