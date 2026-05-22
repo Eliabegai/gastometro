@@ -29,9 +29,8 @@
 - [ ] **1.3 — Avisar quando soma diverge do total da fatura** — P1 / XS
   - Hoje, se houver lançamento não capturado, ninguém percebe. Quando `meta.valor_total > 0` e `abs(meta.valor_total - sum(t.valor)) > 0.01`, imprimir aviso.
 
-- [ ] **1.4 — Remover dados pessoais de `PALAVRAS_NAO_TITULAR`** — P0 / XS
-  - `parsers/base.py` tem `"ELIABE GAI 8449"` e `"ELIABE GAI 7316"` chumbados na blocklist (nome + finais de cartão). Problemático para repo público e para outros usuários.
-  - Remover essas entradas e, se necessário, mascarar finais de cartão via regex genérica.
+- [x] **1.4 — Remover dados pessoais de `PALAVRAS_NAO_TITULAR`** — P0 / XS
+  - Concluído em 22/05/2026 (ver "Concluídas").
 
 - [ ] **1.5 — `import pandas` dentro de função (3 lugares)** — P3 / XS
   - `parsers/ailos.py:126`, `parsers/nubank.py:117`, `parsers/banco_brasil.py:100`.
@@ -142,8 +141,8 @@
 
 ## 7. Segurança e privacidade
 
-- [ ] **7.1 — Limpar dados pessoais do código** — P0 / XS
-  - Idêntico ao item 1.4 (rastrear como duplicado: concluir os dois juntos).
+- [x] **7.1 — Limpar dados pessoais do código** — P0 / XS
+  - Duplicado do 1.4. Concluído em 22/05/2026.
 
 - [ ] **7.2 — Verificar histórico do git por PDFs commitados** — P1 / XS
   - `git log --all -- '*.pdf' '*.xlsx'` para confirmar que nunca vazaram.
@@ -168,7 +167,21 @@
 
 ## Concluídas
 
-_Ainda nada concluído nesta rodada de melhorias._
+### 22/05/2026
+
+- **1.4 / 7.1 — Remover dados pessoais de `PALAVRAS_NAO_TITULAR`**
+  - Removidas as entradas `"ELIABE GAI 8449"` e `"ELIABE GAI 7316"` de
+    `parsers/base.py`.
+  - Análise feita antes de remover: o regex
+    `[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,}` aplicado token a token já descarta linhas que
+    contenham finais de cartão (qualquer dígito), então essas entradas
+    eram funcionalmente inúteis (nunca consultadas) e apenas vazavam
+    dado pessoal.
+  - Adicionado docstring detalhado em `detectar_titular` explicando as
+    três camadas de filtro.
+  - Validação: extração nos dois PDFs reais segue identificando titular
+    `Eliabe Gai`, 48 transações Ailos (R$ 4.422,81) e 10 Nubank
+    (R$ 932,54) — idêntico ao baseline do HANDOFF.
 
 ---
 

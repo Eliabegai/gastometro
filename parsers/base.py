@@ -109,15 +109,21 @@ PALAVRAS_NAO_TITULAR = {
     "ESTÉTICA", "CUIDADOS", "GASTRONOMIA", "INFORMÁTICA", "POSTOS", "GASOLINA",
     "SAÚDE", "SUPERMERCADO", "HIPERMERCADO", "VESTUÁRIO", "DIVERSOS", "SAQUES",
     "EMPRÉSTIMOS", "DINHEIRO", "MOVIMENTACOES", "CONTA", "PRO", "GOLD",
-    "ANUIDADE", "MAS", "ELIABE GAI 8449", "ELIABE GAI 7316",
+    "ANUIDADE", "MAS",
 }
 
 
 def detectar_titular(texto: str) -> str:
     """Identifica o nome do titular procurando a linha em maiúsculas mais frequente.
 
-    Ignora linhas que contenham palavras administrativas comuns (encargos,
-    pagamento, total, etc.).
+    Filtros aplicados, em ordem:
+      1. Linhas com 2 a 6 palavras (nomes próprios típicos).
+      2. Cada palavra deve ser composta apenas por letras maiúsculas
+         acentuadas (regex `[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{2,}`). Essa regra sozinha já
+         elimina linhas com finais de cartão (ex.: "FULANO DE TAL 1234"),
+         números de documento e códigos.
+      3. Linhas com termos administrativos comuns (PAGAMENTO, TOTAL,
+         CARTÃO, ANUIDADE, etc.) são ignoradas via `PALAVRAS_NAO_TITULAR`.
     """
     contagem: dict[str, int] = {}
     for linha in texto.splitlines():
