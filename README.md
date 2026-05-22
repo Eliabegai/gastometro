@@ -78,7 +78,7 @@ Transações que não casarem com nenhuma palavra-chave caem em **"Outros Gastos
 ## Estrutura do projeto
 
 ```
-leitor-pdf/
+gastrometro/
 ├── extrator.py            # CLI + exportador Excel
 ├── categorias.py          # regras de categorização
 ├── parsers/

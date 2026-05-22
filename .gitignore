@@ -26,3 +26,5 @@ Thumbs.db
 *.xlsx
 !exemplos/*.pdf
 !exemplos/*.xlsx
+
+HANDOFF.md
