@@ -40,6 +40,13 @@ pip install -r requirements.txt
 
 ## Como executar a extração de um PDF
 
+O fluxo padrão usa duas pastas dedicadas:
+
+- `entrada/` — coloque aqui os PDFs das faturas a processar.
+- `saida/` — recebe o Excel único acumulativo (`saida/gastometro.xlsx`).
+
+Ambas são criadas automaticamente na primeira execução.
+
 Toda vez que for usar, **ative o ambiente virtual** antes:
 
 ```bash
@@ -48,38 +55,72 @@ source .venv/bin/activate      # macOS / Linux
 # .venv\Scripts\activate       # Windows PowerShell
 ```
 
-Depois rode o `extrator.py` em uma das três formas:
+### Fluxo padrão (recomendado)
 
 ```bash
-# 1) Um PDF específico (caminho relativo ou absoluto)
-python extrator.py Fatura_05_2026.pdf
-python extrator.py ~/Downloads/Nubank_2026-05-13.pdf
+# 1) Coloque os PDFs em entrada/
+mv ~/Downloads/Fatura_05_2026.pdf entrada/
+mv ~/Downloads/Nubank_2026-05-13.pdf entrada/
 
-# 2) Todos os PDFs da pasta atual
+# 2) Rode o extrator
 python extrator.py
+```
 
-# 3) Todos os PDFs de outra pasta
+O resultado fica em `saida/gastometro.xlsx`. Cada execução **acumula**
+faturas novas no mesmo arquivo. Faturas com nome de PDF já presente no
+Excel são ignoradas (mostra "Ignorado (já no Excel)" no terminal).
+
+### Alternativas (sobrescrevem a pasta padrão)
+
+```bash
+# Processar um único PDF fora de entrada/
+python extrator.py ~/Downloads/Fatura_05_2026.pdf
+
+# Processar todos os PDFs de outra pasta
 python extrator.py ~/Downloads/faturas/
 ```
 
-Para cada `Fatura.pdf` será criado um `Fatura.xlsx` no mesmo diretório
-com três abas:
+Em qualquer modo, a saída sempre vai para `saida/gastometro.xlsx`.
 
-- **Informações**: banco, titular, referência (mês/ano), data de
-  fechamento, data de vencimento, valor total e quantidade de
-  transações.
-- **Transações**: banco, titular, referência, data, descrição, parcela,
-  cidade, valor e categoria de cada lançamento.
-- **Resumo por Categoria**: total gasto por categoria + total geral.
+### Re-processar uma fatura
+
+Se você atualizou as regras de categorização e quer reaplicá-las a uma
+fatura já no Excel:
+
+1. Abra `saida/gastometro.xlsx`.
+2. Apague a linha dessa fatura na aba **Informações** e todas as
+   transações dela na aba **Transações** (filtrar por `Arquivo`).
+3. Salve e rode `python extrator.py` novamente.
+
+Para começar do zero: apague `saida/gastometro.xlsx` e rode de novo.
+
+### Estrutura do Excel gerado
+
+- **Informações**: uma linha por fatura processada (arquivo, banco,
+  titular, referência, fechamento, vencimento, valor total, qtde. de
+  transações).
+- **Transações**: todas as transações de todas as faturas, ordenadas
+  por data, com a coluna `Arquivo` indicando a origem.
+- **Resumo por Categoria**: soma agregada por categoria + total geral.
+- **Resumo Mensal**: pivot com referência (mês/ano) nas linhas e
+  categorias nas colunas, mais total por mês e linha `TOTAL` no fim.
 
 ### Saída esperada no terminal
 
 ```
 Processando: Fatura_05_2026.pdf
   Banco: Ailos | Titular: Fulano De Tal | Referência: Maio/2026
-  Fechamento: 05/05/2026 | Vencimento: 15/05/2026
+  Fechamento: 04/05/2026 | Vencimento: 11/05/2026
   48 transações encontradas.
-  Excel gerado: Fatura_05_2026.xlsx
+
+Processando: Nubank_2026-05-13.pdf
+  Banco: Nubank | Titular: Fulano De Tal | Referência: Maio/2026
+  Fechamento: 06/05/2026 | Vencimento: 13/05/2026
+  10 transações encontradas.
+
+Excel acumulativo atualizado: /caminho/gastometro/saida/gastometro.xlsx
+  Total no arquivo: 2 faturas, 58 transações.
+  Faturas adicionadas nesta execução: 2.
 
 Concluído.
 ```
@@ -124,7 +165,9 @@ Transações que não casarem com nenhuma palavra-chave caem em **"Outros Gastos
 
 ```
 gastometro/
-├── extrator.py            # CLI + exportador Excel
+├── entrada/               # coloque os PDFs aqui (gitignored)
+├── saida/                 # gastometro.xlsx é gerado aqui (gitignored)
+├── extrator.py            # CLI + exportador Excel acumulativo
 ├── categorias.py          # regras de categorização
 ├── parsers/
 │   ├── __init__.py        # detecção automática do banco

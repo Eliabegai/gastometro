@@ -123,6 +123,9 @@
 
 - [ ] **5.9 — Alertas configuráveis (`config.yaml`)** — P3 / M
 
+- [x] **5.10 — Excel único acumulativo + pastas `entrada/`/`saida/`** — P1 / S
+  - Concluído em 22/05/2026 (ver "Concluídas").
+
 ## 6. Tooling / DX
 
 - [ ] **6.1 — `pyproject.toml` + `ruff` + `mypy`** — P2 / S
@@ -168,6 +171,26 @@
 ## Concluídas
 
 ### 22/05/2026
+
+- **5.10 — Excel único acumulativo + pastas `entrada/`/`saida/`**
+  - `extrator.py` reescrito: PDFs lidos por padrão de `entrada/`,
+    resultado gravado sempre em `saida/gastometro.xlsx` (criadas
+    automaticamente na primeira execução).
+  - Excel agora é único e acumulativo. Cada execução adiciona apenas as
+    faturas cujo nome de arquivo ainda não consta na aba `Informações`;
+    duplicatas são ignoradas com mensagem clara no terminal.
+  - 4 abas no resultado: `Informações` (uma linha por fatura),
+    `Transações` (acumulativo com coluna `Arquivo`), `Resumo por
+    Categoria` (recalculado) e nova aba `Resumo Mensal` (pivot
+    referência × categoria, com totais por linha e coluna).
+  - Argumentos posicionais ainda funcionam (PDF avulso ou pasta) e
+    continuam gravando em `saida/gastometro.xlsx`.
+  - README atualizado com o novo fluxo e instruções para re-processar
+    uma fatura.
+  - Validação: rodar duas vezes seguidas mantém 2 faturas e 58
+    transações (R$ 5.355,35 = R$ 4.422,81 Ailos + R$ 932,54 Nubank);
+    duplicar um PDF com outro nome adiciona corretamente como 3ª
+    fatura.
 
 - **1.4 / 7.1 — Remover dados pessoais de `PALAVRAS_NAO_TITULAR`**
   - Removidas as entradas `"ELIABE GAI 8449"` e `"ELIABE GAI 7316"` de
