@@ -26,10 +26,8 @@
     `"1.234,56"`, `"1,234.56"`, `"1234,56"`, `"4,422.81."`,
     `"-R$ 50,00"`, `"R$ 0,00"`, `"\u22125,00"`, vazios e `None`.
 
-- [ ] **1.2 — Inferência de ano errada em parcelas antigas** — P1 / S
-  - `parsers/ailos.py::_ano_do_vencimento` (idem nubank/banco_brasil) aplica o ano do vencimento a todas as transações.
-  - Caso de teste: `MAPFRE SEGUROS 14 JAN` em fatura de maio.
-  - Regra sugerida: se mês da transação > mês do vencimento, ano = ano_vencimento - 1.
+- [x] **1.2 — Inferência de ano errada em parcelas antigas** — P1 / S
+  - Concluído em 22/05/2026 (ver "Concluídas").
 
 - [x] **1.3 — Avisar quando soma diverge do total da fatura** — P1 / XS
   - Concluído em 22/05/2026 (ver "Concluídas").
@@ -91,8 +89,8 @@
   - Remove import `from categorias import categorizar` dos 3 parsers.
   - Permite reprocessar Excel sem reabrir PDF.
 
-- [ ] **4.2 — Mover `_ano_do_vencimento` para `parsers/base.py`** — P3 / XS
-  - Triplicada hoje.
+- [x] **4.2 — Mover `_ano_do_vencimento` para `parsers/base.py`** — P3 / XS
+  - Concluído em 22/05/2026 (ver "Concluídas").
 
 - [ ] **4.3 — Definir Protocol/ABC para parser** — P3 / S
   - Contrato `detectar() -> bool`, `extrair(pdf) -> Fatura`, `NOME_BANCO: str`.
@@ -175,6 +173,39 @@
 ## Concluídas
 
 ### 22/05/2026
+
+- **1.2 + 4.2 — Inferência correta do ano da transação + consolidação em `base.py`**
+  - Nova função `inferir_ano_transacao(mes_tx, data_vencimento, parcela,
+    *, recuar_pelo_numero_da_parcela=False)` em `parsers/base.py`, com
+    duas estratégias:
+    - **Regra base** (sempre aplicada): se `mes_tx > mes_venc`, ano =
+      `ano_venc - 1` (compras de meses anteriores que entram numa
+      fatura mais recente, ex.: dezembro caindo na fatura de janeiro).
+      Senão, mesmo ano do vencimento.
+    - **Recuo por parcela** (`recuar_pelo_numero_da_parcela=True`):
+      quando o banco exibe a **data da compra original** (não a data
+      da cobrança da parcela atual), o ano da compra é calculado
+      recuando `X - 1` meses a partir do mês do vencimento, sendo `X`
+      o número da parcela atual em `X/Y`. Cobre o caso `MAPFRE
+      SEGUROS 14 JAN 16/18` em fatura maio/2026 → 14/01/2025.
+  - **Por banco**:
+    - **Ailos**: liga o recuo (mostra data da compra). Inclui ajuste no
+      caso especial em que a parcela vem em linha separada do nome do
+      produto — a data é recalculada quando a parcela é descoberta.
+    - **Nubank**: mantém o recuo desligado (mostra a data da cobrança
+      da parcela, sempre próxima do dia 6 do ciclo).
+    - **Banco do Brasil**: mantém desligado por enquanto (sem PDF real
+      para validar; pode mudar quando houver fatura de teste).
+  - **4.2**: a função antiga `_ano_do_vencimento` foi consolidada em
+    `parsers/base.py::ano_do_vencimento` (pública) e removida dos 3
+    parsers, eliminando triplicação e a importação `from datetime import
+    date` redundante nos parsers.
+  - **Validação**: rodada com 18 PDFs reais (Ailos + 17 Nubank, indo de
+    mai/2024 a mai/2026) → 325 transações, R$ 26.641,41 no total. Em
+    `Nubank_2025-01-13.pdf` (fatura jan/2025), as 49 transações com
+    data `06 DEZ` foram corretamente atribuídas a 2024; as 2 com data
+    em janeiro ficaram em 2025. `MAPFRE SEGUROS 16/18` agora consta
+    como 14/01/2025.
 
 - **1.5 — Substituído `import pandas` por `datetime.date` nos parsers**
   - Os três parsers (Ailos, Nubank, BB) usavam `pd.Timestamp.now().year`

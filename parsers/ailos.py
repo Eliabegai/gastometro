@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date
 from pathlib import Path
 
 import pdfplumber
@@ -18,6 +17,7 @@ from .base import (
     Transacao,
     detectar_titular,
     formatar_data,
+    inferir_ano_transacao,
     parse_valor_brl,
     referencia_pelo_vencimento,
 )
@@ -73,7 +73,6 @@ def extrair(caminho_pdf: Path) -> Fatura:
     with pdfplumber.open(caminho_pdf) as pdf:
         texto_completo = "\n".join((p.extract_text() or "") for p in pdf.pages)
         metadata = _extrair_metadata(texto_completo)
-        ano = _ano_do_vencimento(metadata.data_vencimento)
 
         transacoes: list[Transacao] = []
         for pagina in pdf.pages:
@@ -84,7 +83,7 @@ def extrair(caminho_pdf: Path) -> Fatura:
                 linhas = _processar_coluna(coluna)
                 if not linhas:
                     continue
-                transacoes.extend(_montar_transacoes(linhas, ano))
+                transacoes.extend(_montar_transacoes(linhas, metadata.data_vencimento))
 
     return Fatura(metadata=metadata, transacoes=transacoes)
 
@@ -116,13 +115,6 @@ def _extrair_metadata(texto: str) -> FaturaMetadata:
 
     metadata.referencia_mes = referencia_pelo_vencimento(metadata.data_vencimento)
     return metadata
-
-
-def _ano_do_vencimento(data_vencimento: str) -> int:
-    m = re.match(r"\d{2}/\d{2}/(\d{4})", data_vencimento)
-    if m:
-        return int(m.group(1))
-    return date.today().year
 
 
 def _eh_administrativa(descricao: str) -> bool:
@@ -207,7 +199,7 @@ def _processar_coluna(coluna_crop) -> list[_Linha]:
     return _classificar_palavras_em_colunas(linhas_abaixo, colunas)
 
 
-def _montar_transacoes(linhas: list[_Linha], ano: int) -> list[Transacao]:
+def _montar_transacoes(linhas: list[_Linha], data_vencimento: str) -> list[Transacao]:
     transacoes: list[Transacao] = []
     desc_pendente: list[str] = []
     cidade_pendente: list[str] = []
@@ -230,13 +222,13 @@ def _montar_transacoes(linhas: list[_Linha], ano: int) -> list[Transacao]:
         if linha.tem_data and linha.tem_valor:
             dia = linha.data_tokens[0]
             mes = linha.data_tokens[1]
-            data = formatar_data(dia, mes, ano)
+            mes_num = MESES_PT.get(mes.upper())
 
             desc = " ".join(desc_pendente + linha.desc_tokens).strip()
             cidade = " ".join(cidade_pendente + linha.cidade_tokens).strip()
             valor = _parse_valor_tokens(linha.valor_tokens)
 
-            if valor is None or _eh_administrativa(desc):
+            if valor is None or mes_num is None or _eh_administrativa(desc):
                 desc_pendente = []
                 cidade_pendente = []
                 continue
@@ -246,6 +238,11 @@ def _montar_transacoes(linhas: list[_Linha], ano: int) -> list[Transacao]:
             if m_parc:
                 parcela = m_parc.group(1)
                 desc = (desc[: m_parc.start()] + desc[m_parc.end():]).strip()
+
+            ano = inferir_ano_transacao(
+                mes_num, data_vencimento, parcela, recuar_pelo_numero_da_parcela=True
+            )
+            data = formatar_data(dia, mes, ano)
 
             transacoes.append(
                 Transacao(
@@ -268,7 +265,18 @@ def _montar_transacoes(linhas: list[_Linha], ano: int) -> list[Transacao]:
             and not linha.valor_tokens
             and transacoes
         ):
-            transacoes[-1].parcela = linha.desc_tokens[0]
+            nova_parcela = linha.desc_tokens[0]
+            transacoes[-1].parcela = nova_parcela
+            m_data = re.match(r"(\d{2})/(\d{2})/\d{4}", transacoes[-1].data)
+            if m_data:
+                dia_str, mes_str_num = m_data.group(1), m_data.group(2)
+                novo_ano = inferir_ano_transacao(
+                    int(mes_str_num),
+                    data_vencimento,
+                    nova_parcela,
+                    recuar_pelo_numero_da_parcela=True,
+                )
+                transacoes[-1].data = formatar_data(dia_str, int(mes_str_num), novo_ano)
             continue
 
         if not linha.data_tokens and not linha.valor_tokens:

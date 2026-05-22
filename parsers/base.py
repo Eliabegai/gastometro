@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date
 
 
 MESES_PT = {
@@ -102,6 +103,84 @@ def referencia_pelo_vencimento(data_vencimento: str) -> str:
     _, mes, ano = match.groups()
     nome_mes = MES_POR_NUMERO.get(int(mes), mes)
     return f"{nome_mes}/{ano}"
+
+
+def ano_do_vencimento(data_vencimento: str) -> int:
+    """Extrai o ano (AAAA) de uma data no formato DD/MM/AAAA.
+
+    Retorna o ano corrente quando a data não estiver no formato esperado.
+    """
+    m = re.match(r"\d{2}/\d{2}/(\d{4})", data_vencimento)
+    if m:
+        return int(m.group(1))
+    return date.today().year
+
+
+def _menos_meses(mes: int, ano: int, n: int) -> tuple[int, int]:
+    """Subtrai `n` meses de `(mes, ano)` e devolve `(mes_resultante, ano_resultante)`."""
+    total = ano * 12 + (mes - 1) - n
+    return (total % 12) + 1, total // 12
+
+
+def _numero_da_parcela(parcela: str) -> int | None:
+    """Extrai o número da parcela atual (ex.: '16' de '16/18'). Retorna None se inválido."""
+    if not parcela:
+        return None
+    m = re.match(r"\s*(\d+)\s*/\s*(\d+)\s*$", parcela)
+    if not m:
+        return None
+    atual, total = int(m.group(1)), int(m.group(2))
+    if total < 1 or atual < 1 or atual > total:
+        return None
+    return atual
+
+
+def inferir_ano_transacao(
+    mes_transacao: int,
+    data_vencimento: str,
+    parcela: str = "",
+    *,
+    recuar_pelo_numero_da_parcela: bool = False,
+) -> int:
+    """Infere o ano de uma transação a partir do mês dela e do vencimento da fatura.
+
+    Regra base (sempre aplicada quando o recuo por parcela está desligado
+    ou quando não há parcela `X/Y` com `X > 1`):
+      - Se `mes_transacao > mes_vencimento`, a transação é do ano anterior
+        (caso comum: compras de dezembro aparecendo na fatura de janeiro).
+      - Caso contrário, do mesmo ano do vencimento.
+
+    Recuo por número de parcela (`recuar_pelo_numero_da_parcela=True`):
+      - Quando a fatura mostra a **data da compra original** (não a data
+        da cobrança da parcela atual), o ano da transação é o da compra,
+        que foi feita há `X - 1` meses se vemos a parcela `X/Y`. Recua
+        `X - 1` meses a partir do mês do vencimento e devolve o ano
+        resultante. Cobre parcelamentos longos que cruzam virada de ano
+        (ex.: `MAPFRE 14 JAN 16/18` em fatura de maio/2026 → 2025).
+
+    Quando ligar o recuo?
+      - **Ailos**: a data exibida na fatura é a data da compra → ligar.
+      - **Nubank**: a data exibida é a data da cobrança da parcela
+        (sempre dia 6 do ciclo) → manter desligado.
+
+    Limitação conhecida: assume parcelas estritamente mensais e que a 1ª
+    cobrança ocorre no mesmo mês da compra. Pequenos desvios (1 mês)
+    geralmente não afetam o ano resultante.
+    """
+    m = re.match(r"\d{2}/(\d{2})/(\d{4})", data_vencimento)
+    if not m:
+        return date.today().year
+    mes_venc, ano_venc = int(m.group(1)), int(m.group(2))
+
+    if recuar_pelo_numero_da_parcela:
+        n_parcela = _numero_da_parcela(parcela)
+        if n_parcela is not None and n_parcela > 1:
+            _, ano_calc = _menos_meses(mes_venc, ano_venc, n_parcela - 1)
+            return ano_calc
+
+    if mes_transacao > mes_venc:
+        return ano_venc - 1
+    return ano_venc
 
 
 PALAVRAS_NAO_TITULAR = {

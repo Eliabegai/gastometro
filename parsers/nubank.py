@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from datetime import date
 from pathlib import Path
 
 import pdfplumber
@@ -17,6 +16,7 @@ from .base import (
     Transacao,
     detectar_titular,
     formatar_data,
+    inferir_ano_transacao,
     parse_valor_brl,
     referencia_pelo_vencimento,
 )
@@ -57,8 +57,7 @@ def extrair(caminho_pdf: Path) -> Fatura:
         texto_completo = "\n".join((p.extract_text() or "") for p in pdf.pages)
 
     metadata = _extrair_metadata(texto_completo)
-    ano = _ano_do_vencimento(metadata.data_vencimento)
-    transacoes = _extrair_transacoes(texto_completo, ano)
+    transacoes = _extrair_transacoes(texto_completo, metadata.data_vencimento)
 
     return Fatura(metadata=metadata, transacoes=transacoes)
 
@@ -109,14 +108,7 @@ def _extrair_metadata(texto: str) -> FaturaMetadata:
     return metadata
 
 
-def _ano_do_vencimento(data_vencimento: str) -> int:
-    m = re.match(r"\d{2}/\d{2}/(\d{4})", data_vencimento)
-    if m:
-        return int(m.group(1))
-    return date.today().year
-
-
-def _extrair_transacoes(texto: str, ano: int) -> list[Transacao]:
+def _extrair_transacoes(texto: str, data_vencimento: str) -> list[Transacao]:
     inicio = re.search(r"TRANSAÇÕES DE.*", texto)
     if not inicio:
         return []
@@ -140,7 +132,9 @@ def _extrair_transacoes(texto: str, ano: int) -> list[Transacao]:
         m = RE_TRANSACAO.match(linha)
         if not m:
             continue
-        if m.group("mes").upper() not in MESES_PT:
+        mes_str = m.group("mes").upper()
+        mes_num = MESES_PT.get(mes_str)
+        if mes_num is None:
             continue
 
         descricao = m.group("descricao").strip()
@@ -155,7 +149,8 @@ def _extrair_transacoes(texto: str, ano: int) -> list[Transacao]:
             descricao = (descricao[: m_parc.start()] + descricao[m_parc.end():]).strip()
             descricao = descricao.rstrip("-").strip()
 
-        data = formatar_data(m.group("dia"), m.group("mes"), ano)
+        ano = inferir_ano_transacao(mes_num, data_vencimento, parcela)
+        data = formatar_data(m.group("dia"), mes_str, ano)
 
         transacoes.append(
             Transacao(
