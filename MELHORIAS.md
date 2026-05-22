@@ -42,6 +42,44 @@
   - `parsers/__init__.py::detectar_banco` + `extrair_fatura` chamam `_ler_texto` independentemente.
   - Refatorar para abrir o PDF uma vez e reaproveitar o texto.
 
+- [x] **1.7 — Capturar anuidade e preservar sinal de estornos (Ailos)** — P1 / S
+  - **Anuidade**: aparece na seção `MOVIMENTAÇÕES DA CONTA` acima do
+    cabeçalho da tabela principal, em layout próprio (3 linhas:
+    descrição / data+valor / `(NNNN) X/Y`). Hoje o parser descarta
+    tudo acima do cabeçalho. Resultado: o `valor_total` declarado
+    pela fatura diverge da soma das transações (caso visto:
+    `Fatura_02_2026.pdf` com diferença de R$ 11,67).
+  - **Estornos**: o pdfplumber separa `"-R$"` e o número em dois
+    tokens distintos; `_parse_valor_tokens` pega o numérico primeiro
+    e perde o sinal, registrando o estorno como valor positivo
+    (caso visto: `Fatura_04_2026.pdf`, MERCADOLIVRE*TOTALMO 2026-03-04,
+    `-R$ 39,99` registrado como `+R$ 39,99` → soma 4.270,35 vs total
+    4.190,37 = +R$ 79,98).
+  - Lançamentos administrativos a manter como descartados: `SALDO
+    ANTERIOR`, `PAGTO DEB EM CONTA`, `PAGAMENTO RECEBIDO/EFETUADO`,
+    `TOTAL DE`, `TOTAL R$`.
+  - Lançamentos a aceitar como transações reais: `ANUIDADE
+    MASTERCARD`, `DESC ANUIDADE` (desconto/isenção, valor negativo
+    ou zero), estornos comuns na tabela principal.
+
+- [ ] **1.8 — Divergências em algumas faturas Nubank** — P1 / M
+  - Após a correção de 1.7 e o aviso de 1.3, restaram divergências
+    apenas em PDFs Nubank antigos (delta calculado contra
+    `valor_total` da própria fatura):
+    - `Nubank_2024-05-13.pdf`: total R$ 1.518,44 mas o parser
+      extrai **0 transações** — formato/layout não reconhecido.
+    - `Nubank_2024-08-13.pdf`: +R$ 51,64; `Nubank_2024-09-13.pdf`:
+      +R$ 64,63; `Nubank_2025-09-13.pdf`: +R$ 406,51 — possíveis
+      estornos sem sinal preservado, IOF/encargos somados duplo,
+      ou transações capturadas que já estavam descontadas no total.
+    - `Nubank_2025-10/11/12-13.pdf`: deltas pequenos negativos
+      (-R$ 1,31 a -R$ 5,25) — provavelmente juros / IOF / multa
+      lançados em linhas de "Encargos" que o parser ignora.
+  - Investigar com `extract_words` e comparar token a token com o
+    texto bruto. Ver se o Nubank também tem um equivalente da
+    seção `MOVIMENTAÇÕES DA CONTA` (encargos do ciclo, anuidade
+    eventual, IOF) que precisa ser somado/subtraído.
+
 ## 2. Categorização (`categorias.py`)
 
 - [ ] **2.1 — Duplicatas e conflitos no dicionário** — P2 / XS
@@ -173,6 +211,37 @@
 ## Concluídas
 
 ### 22/05/2026
+
+- **1.7 — Anuidade Ailos capturada e estornos com sinal correto**
+  - **Estornos**: `parsers/ailos.py::_parse_valor_tokens` agora detecta
+    tokens `-R$`, `-` ou `\u2212` antes do número e propaga o sinal
+    negativo. Caso `Fatura_04_2026.pdf` MERCADOLIVRE*TOTALMO 2026-03-04
+    `-R$ 39,99` corrigido de `+39,99` para `-39,99`.
+  - **Anuidade**: nova função `_extrair_movimentacoes_conta(coluna,
+    data_vencimento)` processa a seção `MOVIMENTAÇÕES DA CONTA` que
+    fica acima da tabela principal. Para evitar o intercalamento entre
+    colunas que `extract_text()` causa, recebe o crop da coluna
+    esquerda direto e localiza a faixa Y entre `MOVIMENTAÇÕES` e o
+    cabeçalho `DATA DESCRIÇÃO`, depois agrupa palavras em linhas e
+    aceita o padrão "descrição (linha anterior) / DD MMM valor /
+    `(NNNN) X/Y` (linha seguinte)".
+  - `ADMINISTRATIVOS` reduzido para os termos que realmente são
+    metadados (`SALDO ANTERIOR`, `PAGTO DEB EM CONTA`, `PAGAMENTO
+    RECEBIDO/EFETUADO`, `TOTAL DE`, `TOTAL R$`); `ANUIDADE
+    MASTERCARD`, `DESC ANUIDADE` e `ESTORNO` saíram da lista e voltam
+    como transações reais quando aplicável.
+  - **Validação**: 15 PDFs Ailos rodados pelo `extrator.py`, todos
+    com soma das transações batendo exatamente o `valor_total`
+    declarado (delta R$ 0,00). Casos relevantes:
+    - `Fatura_02_2026.pdf`: anuidade R$ 11,67 (11/12) capturada → total
+      R$ 933,59 bate.
+    - `Fatura_03_2026.pdf`: anuidade R$ 11,63 (12/12 — última parcela)
+      capturada.
+    - `Fatura_04_2026.pdf`: estorno R$ −39,99 preservado.
+    - `Fatura_05_2026.pdf`: anuidade R$ 13,50 (01/12 — nova série)
+      junto com `DESC ANUIDADE POR USO` R$ −13,50, refletindo o
+      desconto integral por uso. Cobre o cenário "se passa de um certo
+      valor é abatida".
 
 - **1.2 + 4.2 — Inferência correta do ano da transação + consolidação em `base.py`**
   - Nova função `inferir_ano_transacao(mes_tx, data_vencimento, parcela,

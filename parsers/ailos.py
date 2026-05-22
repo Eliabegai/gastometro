@@ -30,11 +30,9 @@ RE_VALOR = re.compile(r"^-?[\d.,]+$")
 RE_PARCELA = re.compile(r"^\d{1,2}/\d{1,2}$")
 
 ADMINISTRATIVOS = (
-    "ANUIDADE MASTERCARD",
-    "DESC ANUIDADE",
     "PAGTO DEB EM CONTA",
     "PAGAMENTO RECEBIDO",
-    "ESTORNO",
+    "PAGAMENTO EFETUADO",
     "SALDO ANTERIOR",
     "TOTAL DE",
     "TOTAL R$",
@@ -84,6 +82,9 @@ def extrair(caminho_pdf: Path) -> Fatura:
                 if not linhas:
                     continue
                 transacoes.extend(_montar_transacoes(linhas, metadata.data_vencimento))
+            transacoes.extend(
+                _extrair_movimentacoes_conta(esquerda, metadata.data_vencimento)
+            )
 
     return Fatura(metadata=metadata, transacoes=transacoes)
 
@@ -304,9 +305,187 @@ def _montar_transacoes(linhas: list[_Linha], data_vencimento: str) -> list[Trans
 
 
 def _parse_valor_tokens(tokens: list[str]) -> float | None:
+    """Extrai o valor numérico dos tokens da coluna VALOR, preservando o sinal.
+
+    O pdfplumber costuma separar o sinal e o prefixo monetário em tokens
+    distintos (ex.: a célula `-R$ 39,99` vira `["-R$", "39,99"]`). Aqui
+    detectamos tokens que sinalizam negativo (`-R$`, `-`, sinal Unicode
+    de menos) antes de encontrar o token numérico em si.
+    """
+    negativo = False
     for token in tokens:
+        if token in ("-R$", "-", "\u2212"):
+            negativo = True
+            continue
+        if token == "R$":
+            continue
         if RE_VALOR.match(token):
             valor = parse_valor_brl(token)
-            if valor is not None:
-                return valor
+            if valor is None:
+                continue
+            return -abs(valor) if negativo else valor
     return None
+
+
+RE_MOV_PARCELA_LINHA = re.compile(
+    r"^\(?\d{3,5}\)?\s+(?P<parcela>\d{1,2}/\d{1,2})\s*$"
+)
+RE_MOV_PARCELA_INLINE = re.compile(r"\b(\d{1,2}/\d{1,2})\b")
+
+MOV_DESCARTAR = (
+    "SALDO ANTERIOR",
+    "PAGTO DEB EM CONTA",
+    "PAGAMENTO RECEBIDO",
+    "PAGAMENTO EFETUADO",
+    "TOTAL DE",
+    "TOTAL R$",
+)
+
+
+def _localizar_secao_movimentacoes(palavras) -> tuple[float, float] | None:
+    """Localiza a faixa Y (top_inicial, top_final) da seção `MOVIMENTAÇÕES
+    DA CONTA` numa coluna. Retorna `None` se a seção não estiver presente.
+
+    O início é o `top` da palavra `MOVIMENTAÇÕES` e o fim é o `top` do
+    cabeçalho `DATA DESCRIÇÃO CIDADE VALOR` que abre a tabela principal.
+    """
+    top_inicio: float | None = None
+    top_fim: float | None = None
+    for palavra in palavras:
+        texto = palavra["text"]
+        if top_inicio is None and texto.upper().startswith("MOVIMENTA"):
+            top_inicio = palavra["top"]
+            continue
+        if top_inicio is not None and texto == "DATA" and palavra["top"] > top_inicio:
+            top_fim = palavra["top"]
+            break
+    if top_inicio is None or top_fim is None:
+        return None
+    return top_inicio, top_fim
+
+
+def _extrair_movimentacoes_conta(
+    coluna, data_vencimento: str
+) -> list[Transacao]:
+    """Captura lançamentos da seção `MOVIMENTAÇÕES DA CONTA` (acima da
+    tabela principal): anuidade, desconto de anuidade e quaisquer
+    lançamentos administrativos que sejam, na prática, gastos do titular.
+
+    A seção tem um layout próprio em três linhas para a anuidade
+    parcelada::
+
+        ANUIDADE MASTERCARD
+        05 MAR R$ 11.67
+        (8449) 11/12
+
+    e em uma única linha para outros lançamentos::
+
+        12 JAN PAGTO DEB EM CONTA - C -R$ 3,523.12
+
+    Pagamentos efetuados, saldos e totais são descartados aqui (são
+    metadados da fatura, não consumo do cartão).
+
+    Recebe a coluna já cropada (lado esquerdo da página), evitando o
+    intercalamento que `extract_text()` causa entre as duas colunas.
+    """
+    palavras = coluna.extract_words(use_text_flow=False, keep_blank_chars=False)
+    if not palavras:
+        return []
+
+    faixa = _localizar_secao_movimentacoes(palavras)
+    if faixa is None:
+        return []
+    top_inicio, top_fim = faixa
+
+    palavras_secao = [
+        p for p in palavras if top_inicio < p["top"] < top_fim
+    ]
+    if not palavras_secao:
+        return []
+
+    linhas_palavras = _agrupar_palavras_em_linhas(palavras_secao)
+    linhas_texto: list[str] = []
+    for linha in linhas_palavras:
+        textos = [p["text"] for p in linha]
+        linhas_texto.append(" ".join(textos).strip())
+
+    transacoes: list[Transacao] = []
+    for i, linha in enumerate(linhas_texto):
+        m = _casar_linha_movimentacao(linha)
+        if not m:
+            continue
+        dia, mes_str, resto, valor_str = m
+
+        valor = parse_valor_brl(valor_str)
+        if valor is None:
+            continue
+
+        descricao = resto.strip()
+        if not descricao and i > 0:
+            anterior = linhas_texto[i - 1].strip()
+            if not _casar_linha_movimentacao(anterior):
+                descricao = anterior
+
+        if not descricao:
+            continue
+        if any(termo in descricao.upper() for termo in MOV_DESCARTAR):
+            continue
+
+        parcela = ""
+        m_inline = RE_MOV_PARCELA_INLINE.search(descricao)
+        if m_inline:
+            parcela = m_inline.group(1)
+            descricao = (
+                descricao[: m_inline.start()] + descricao[m_inline.end():]
+            ).strip()
+        elif i + 1 < len(linhas_texto):
+            m_next = RE_MOV_PARCELA_LINHA.match(linhas_texto[i + 1])
+            if m_next:
+                parcela = m_next.group("parcela")
+
+        mes_num = MESES_PT.get(mes_str.upper())
+        if mes_num is None:
+            continue
+
+        ano = inferir_ano_transacao(
+            mes_num,
+            data_vencimento,
+            parcela,
+            recuar_pelo_numero_da_parcela=True,
+        )
+        data = formatar_data(dia, mes_num, ano)
+
+        transacoes.append(
+            Transacao(
+                data=data,
+                descricao=descricao,
+                parcela=parcela,
+                cidade="",
+                valor=valor,
+                categoria=categorizar(descricao),
+            )
+        )
+
+    return transacoes
+
+
+_RE_MOV_LINHA = re.compile(
+    r"^(?P<dia>\d{2})\s+(?P<mes>[A-Za-z]{3})\b\s*(?P<resto>.*?)\s*"
+    r"(?P<valor>-?R\$\s*[\d.,]+)\s*$"
+)
+
+
+def _casar_linha_movimentacao(linha: str) -> tuple[str, str, str, str] | None:
+    """Reconhece uma linha com `DD MMM [descrição] [valor]`.
+
+    Retorna `(dia, mes, resto, valor)` ou `None` se não casar. Valida
+    também se `mes` é uma abreviação reconhecida em PT-BR para evitar
+    falsos positivos quando outra linha começa com dois dígitos seguidos
+    de qualquer palavra de três letras.
+    """
+    m = _RE_MOV_LINHA.match(linha)
+    if not m:
+        return None
+    if m.group("mes").upper() not in MESES_PT:
+        return None
+    return m.group("dia"), m.group("mes"), m.group("resto") or "", m.group("valor")
