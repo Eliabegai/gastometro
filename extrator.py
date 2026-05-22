@@ -70,7 +70,10 @@ def _conciliar_total(fatura: Fatura) -> None:
     - Se o parser não conseguiu extrair o total (`valor_total == 0`),
       preenche com a soma e avisa que estamos confiando só na soma.
     - Se há total extraído mas ele diverge da soma além de `TOLERANCIA_TOTAL`,
-      imprime um aviso (provável lançamento não capturado pelo parser).
+      imprime um aviso. Quando a diferença bate com a soma dos estornos
+      (valores negativos no extrato), o aviso é informativo: o banco
+      tipicamente computa o total bruto e os estornos aparecem como
+      crédito separado.
     - Caso contrário, fica em silêncio.
     """
     meta = fatura.metadata
@@ -84,13 +87,22 @@ def _conciliar_total(fatura: Fatura) -> None:
             )
         return
     diferenca = meta.valor_total - soma
-    if abs(diferenca) > TOLERANCIA_TOTAL:
-        sinal = "+" if diferenca > 0 else "-"
+    if abs(diferenca) <= TOLERANCIA_TOTAL:
+        return
+
+    soma_estornos = sum(t.valor for t in fatura.transacoes if t.valor < 0)
+    sinal = "+" if diferenca > 0 else "-"
+    cabecalho = (
+        f"  AVISO: total da fatura R$ {meta.valor_total:.2f} difere da soma "
+        f"das transações R$ {soma:.2f} ({sinal}R$ {abs(diferenca):.2f})."
+    )
+    if soma_estornos < 0 and abs(diferenca + soma_estornos) <= TOLERANCIA_TOTAL:
         print(
-            f"  AVISO: total da fatura R$ {meta.valor_total:.2f} difere da soma "
-            f"das transações R$ {soma:.2f} ({sinal}R$ {abs(diferenca):.2f}). "
-            f"Pode haver lançamento não capturado pelo parser."
+            f"{cabecalho} Diferença equivale aos estornos detectados "
+            f"(R$ {soma_estornos:.2f}); o banco computa o total bruto."
         )
+    else:
+        print(f"{cabecalho} Pode haver lançamento não capturado pelo parser.")
 
 
 def _fatura_para_dicts(fatura: Fatura, arquivo: str) -> tuple[dict, list[dict]]:

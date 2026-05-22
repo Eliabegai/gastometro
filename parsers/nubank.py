@@ -31,11 +31,18 @@ RE_TRANSACAO = re.compile(
     (?P<mes>[A-Z]{3})\s+
     (?:••••\s*\d{4}\s+)?
     (?P<descricao>.+?)
-    \s+R\$\s*
-    (?P<valor>-?[\d.,]+)
+    \s+
+    (?:(?P<sinal>[-\u2212])\s*)?
+    (?:R\$\s*)?
+    (?P<valor>\d[\d.,]*)
     \s*$
     """,
     re.VERBOSE,
+)
+
+RE_PARCELA = re.compile(
+    r"-\s*(?:Parcela\s+)?(\d{1,2}/\d{1,2})",
+    re.IGNORECASE,
 )
 
 
@@ -88,11 +95,14 @@ def _extrair_metadata(texto: str) -> FaturaMetadata:
                 m_emit.group(1), m_emit.group(2), int(m_emit.group(3))
             )
 
-    m_total = re.search(r"no valor de\s*R\$\s*([\d.,]+)", texto)
+    m_total = re.search(r"Total de compras[^\n]*?R\$\s*([\d.,]+)", texto)
     if not m_total:
-        m_total = re.search(r"Total de compras[^\n]*?R\$\s*([\d.,]+)", texto)
+        m_total = re.search(r"no valor de\s*R\$\s*([\d.,]+)", texto)
     if not m_total:
-        m_total = re.search(r"RESUMO DA FATURA[\s\S]*?Total a pagar\s+R\$\s*([\d.,]+)", texto)
+        m_total = re.search(
+            r"RESUMO DA FATURA[\s\S]*?Total a pagar\s+R\$\s*([\d.,]+)",
+            texto,
+        )
     if m_total:
         valor = parse_valor_brl(m_total.group(1))
         if valor is not None:
@@ -108,25 +118,41 @@ def _extrair_metadata(texto: str) -> FaturaMetadata:
     return metadata
 
 
+LINHAS_DESCARTAR = (
+    "TRANSAÇÕES DE",
+    "Saldo restante",
+    "Pagamento em",
+    "Fatura anterior",
+    "Pagamento recebido",
+)
+
+
 def _extrair_transacoes(texto: str, data_vencimento: str) -> list[Transacao]:
+    """Varre o bloco `TRANSAÇÕES DE ...` e devolve a lista de transações.
+
+    Suporta dois formatos:
+      - Atual (a partir de meados/2024): `DD MMM •••• NNNN Descrição R$ X,XX`
+      - Antigo (até meados/2024): `DD MMM Descrição [- X/Y] X,XX` (sem `R$`)
+
+    Estornos individuais (`Estorno de "X"`) são marcados como valor
+    negativo, refletindo o crédito recebido pelo titular.
+    """
     inicio = re.search(r"TRANSAÇÕES DE.*", texto)
     if not inicio:
         return []
     bloco = texto[inicio.start():]
-    bloco = re.split(r"Pagamentos e Financiamentos|Em cumprimento à regulação", bloco, maxsplit=1)[0]
+    bloco = re.split(
+        r"Pagamentos e Financiamentos|Em cumprimento à regulação",
+        bloco,
+        maxsplit=1,
+    )[0]
 
     transacoes: list[Transacao] = []
     for linha in bloco.splitlines():
         linha = linha.strip()
         if not linha:
             continue
-        if any(termo in linha for termo in (
-            "TRANSAÇÕES DE",
-            "Saldo restante",
-            "Pagamento em",
-            "Fatura anterior",
-            "Pagamento recebido",
-        )):
+        if any(termo in linha for termo in LINHAS_DESCARTAR):
             continue
 
         m = RE_TRANSACAO.match(linha)
@@ -139,11 +165,16 @@ def _extrair_transacoes(texto: str, data_vencimento: str) -> list[Transacao]:
 
         descricao = m.group("descricao").strip()
         valor = parse_valor_brl(m.group("valor"))
-        if valor is None or valor <= 0:
+        if valor is None or valor == 0:
             continue
+        if m.group("sinal"):
+            valor = -abs(valor)
+
+        if descricao.upper().startswith("ESTORNO"):
+            valor = -abs(valor)
 
         parcela = ""
-        m_parc = re.search(r"-\s*Parcela\s+(\d{1,2}/\d{1,2})", descricao, re.IGNORECASE)
+        m_parc = RE_PARCELA.search(descricao)
         if m_parc:
             parcela = m_parc.group(1)
             descricao = (descricao[: m_parc.start()] + descricao[m_parc.end():]).strip()

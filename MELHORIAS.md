@@ -62,23 +62,10 @@
     MASTERCARD`, `DESC ANUIDADE` (desconto/isenção, valor negativo
     ou zero), estornos comuns na tabela principal.
 
-- [ ] **1.8 — Divergências em algumas faturas Nubank** — P1 / M
-  - Após a correção de 1.7 e o aviso de 1.3, restaram divergências
-    apenas em PDFs Nubank antigos (delta calculado contra
-    `valor_total` da própria fatura):
-    - `Nubank_2024-05-13.pdf`: total R$ 1.518,44 mas o parser
-      extrai **0 transações** — formato/layout não reconhecido.
-    - `Nubank_2024-08-13.pdf`: +R$ 51,64; `Nubank_2024-09-13.pdf`:
-      +R$ 64,63; `Nubank_2025-09-13.pdf`: +R$ 406,51 — possíveis
-      estornos sem sinal preservado, IOF/encargos somados duplo,
-      ou transações capturadas que já estavam descontadas no total.
-    - `Nubank_2025-10/11/12-13.pdf`: deltas pequenos negativos
-      (-R$ 1,31 a -R$ 5,25) — provavelmente juros / IOF / multa
-      lançados em linhas de "Encargos" que o parser ignora.
-  - Investigar com `extract_words` e comparar token a token com o
-    texto bruto. Ver se o Nubank também tem um equivalente da
-    seção `MOVIMENTAÇÕES DA CONTA` (encargos do ciclo, anuidade
-    eventual, IOF) que precisa ser somado/subtraído.
+- [x] **1.8 — Divergências em algumas faturas Nubank** — P1 / M
+  - Resolvidas todas as divergências de cálculo (de 7 → 0); restam
+    apenas 3 avisos informativos sobre **estornos**, conforme detalhe
+    na seção "Concluídas" abaixo.
 
 ## 2. Categorização (`categorias.py`)
 
@@ -211,6 +198,35 @@
 ## Concluídas
 
 ### 22/05/2026
+
+- **1.8 — Divergências em faturas Nubank**
+  - **`valor_total`**: agora `parsers/nubank.py::_extrair_metadata`
+    prioriza `Total de compras` do `RESUMO DA FATURA` em vez de
+    `Total a pagar`. Esse é o número correto para comparar com a
+    soma das transações: `Total a pagar` inclui IOF, juros, multa
+    e pagamentos parciais que não são "compras do mês".
+  - **Formato antigo (até meados/2024)**: `RE_TRANSACAO` ficou mais
+    permissivo — agora aceita linhas sem `R$` antes do valor
+    (`DD MMM Descrição [- X/Y] valor`) e sinal negativo isolado
+    (`-` ou `\u2212`) antes do valor. Resultado: `Nubank_2024-05-13.pdf`
+    saiu de 0 para 27 transações.
+  - **Parcelas no formato antigo**: novo `RE_PARCELA` aceita tanto
+    `- Parcela X/Y` (formato atual) quanto `- X/Y` (formato antigo).
+  - **Estornos**: linhas iniciadas por `Estorno de "X"` são
+    registradas com valor negativo (crédito recebido), refletindo
+    a realidade dos gastos do titular.
+  - **Conciliação informativa**: `extrator.py::_conciliar_total`
+    agora identifica quando a diferença bate com a soma dos
+    estornos detectados e troca a mensagem padrão por uma
+    informativa ("o banco computa o total bruto"). Útil porque o
+    Nubank inclui o valor estornado dentro do `Total de compras`,
+    enquanto nosso parser, corretamente, o trata como crédito.
+  - **Validação**: 19/19 PDFs Nubank rodando sem erro; 16/19 com
+    soma = `Total de compras` (delta R$ 0,00); os 3 restantes têm
+    apenas estornos com mensagem informativa
+    (`Nubank_2024-05/08/09-13.pdf`). 15/15 Ailos também continuam
+    batendo exato. Excel total: 32 faturas, 942 transações
+    (vs 914 antes — +28 transações capturadas da Nubank antiga).
 
 - **1.7 — Anuidade Ailos capturada e estornos com sinal correto**
   - **Estornos**: `parsers/ailos.py::_parse_valor_tokens` agora detecta
