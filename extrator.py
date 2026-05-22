@@ -61,6 +61,37 @@ COLUNAS_TRANSACOES = [
 
 MES_POR_NOME = {nome: num for num, nome in MES_POR_NUMERO.items()}
 
+TOLERANCIA_TOTAL = 0.01
+
+
+def _conciliar_total(fatura: Fatura) -> None:
+    """Compara o total extraído do PDF com a soma das transações.
+
+    - Se o parser não conseguiu extrair o total (`valor_total == 0`),
+      preenche com a soma e avisa que estamos confiando só na soma.
+    - Se há total extraído mas ele diverge da soma além de `TOLERANCIA_TOTAL`,
+      imprime um aviso (provável lançamento não capturado pelo parser).
+    - Caso contrário, fica em silêncio.
+    """
+    meta = fatura.metadata
+    soma = sum(t.valor for t in fatura.transacoes)
+    if meta.valor_total == 0:
+        if fatura.transacoes:
+            meta.valor_total = soma
+            print(
+                f"  AVISO: total da fatura não foi extraído do PDF; "
+                f"usando soma das transações (R$ {soma:.2f})."
+            )
+        return
+    diferenca = meta.valor_total - soma
+    if abs(diferenca) > TOLERANCIA_TOTAL:
+        sinal = "+" if diferenca > 0 else "-"
+        print(
+            f"  AVISO: total da fatura R$ {meta.valor_total:.2f} difere da soma "
+            f"das transações R$ {soma:.2f} ({sinal}R$ {abs(diferenca):.2f}). "
+            f"Pode haver lançamento não capturado pelo parser."
+        )
+
 
 def _fatura_para_dicts(fatura: Fatura, arquivo: str) -> tuple[dict, list[dict]]:
     meta = fatura.metadata
@@ -281,6 +312,7 @@ def processar(pdfs: Iterable[Path], destino: Path) -> None:
             pulados_sem_transacao.append(pdf.name)
             continue
 
+        _conciliar_total(fatura)
         info, linhas = _fatura_para_dicts(fatura, pdf.name)
         novos_info.append(info)
         novas_transacoes.extend(linhas)

@@ -48,7 +48,12 @@ class Fatura:
 
 
 def parse_valor_brl(texto: str) -> float | None:
-    """Converte strings como 'R$ 1.234,56' ou '-R$ 932,54' em float."""
+    """Converte strings como 'R$ 1.234,56' ou '-R$ 932,54' em float.
+
+    Aceita formato BR clássico (`1.234,56`) e formato americano usado em
+    algumas faturas (`1,234.56`). Tolera pontuação trailing herdada de
+    capturas amplas por regex (ex.: `"4,422.81."`).
+    """
     if texto is None:
         return None
     limpo = (
@@ -56,6 +61,7 @@ def parse_valor_brl(texto: str) -> float | None:
         .replace("\u2212", "-")
         .replace(" ", "")
         .strip()
+        .rstrip(".,")
     )
     if not limpo:
         return None

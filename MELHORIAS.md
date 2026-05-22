@@ -16,18 +16,23 @@
 
 ## 1. Robustez e correção de bugs
 
-- [ ] **1.1 — `parse_valor_brl` falha com múltiplos pontos** — P1 / S
-  - `parsers/base.py::parse_valor_brl` não trata `"1.234.56"` (formato visto em faturas Ailos). Cai no `float()` direto e levanta `ValueError`.
-  - Tratar caso "vários pontos" como milhares (último ponto = decimal).
-  - Adicionar testes para: `"1.234,56"`, `"1.234.56"`, `"1234,56"`, `"-R$ 50,00"`, `"R$ 0,00"`, `"\u22125,00"`.
+- [ ] **1.1 — Testes e robustez de `parse_valor_brl`** — P2 / S
+  - Verificado em 22/05/2026 que o caso `"1.234.56"` (ponto como milhar e
+    decimal) descrito originalmente no HANDOFF **não ocorre** nas faturas
+    Ailos reais; o que aparece é o formato americano `"1,234.56"` (já
+    suportado). O bug do trailing `.` foi corrigido junto com o item 1.3
+    (`rstrip(".,")` na função).
+  - Pendente: bateria de testes unitários cobrindo
+    `"1.234,56"`, `"1,234.56"`, `"1234,56"`, `"4,422.81."`,
+    `"-R$ 50,00"`, `"R$ 0,00"`, `"\u22125,00"`, vazios e `None`.
 
 - [ ] **1.2 — Inferência de ano errada em parcelas antigas** — P1 / S
   - `parsers/ailos.py::_ano_do_vencimento` (idem nubank/banco_brasil) aplica o ano do vencimento a todas as transações.
   - Caso de teste: `MAPFRE SEGUROS 14 JAN` em fatura de maio.
   - Regra sugerida: se mês da transação > mês do vencimento, ano = ano_vencimento - 1.
 
-- [ ] **1.3 — Avisar quando soma diverge do total da fatura** — P1 / XS
-  - Hoje, se houver lançamento não capturado, ninguém percebe. Quando `meta.valor_total > 0` e `abs(meta.valor_total - sum(t.valor)) > 0.01`, imprimir aviso.
+- [x] **1.3 — Avisar quando soma diverge do total da fatura** — P1 / XS
+  - Concluído em 22/05/2026 (ver "Concluídas").
 
 - [x] **1.4 — Remover dados pessoais de `PALAVRAS_NAO_TITULAR`** — P0 / XS
   - Concluído em 22/05/2026 (ver "Concluídas").
@@ -171,6 +176,27 @@
 ## Concluídas
 
 ### 22/05/2026
+
+- **1.3 — Avisar quando soma diverge do total da fatura**
+  - Novo helper `_conciliar_total` em `extrator.py` comparando o
+    `valor_total` que o parser extraiu do PDF com a soma das
+    transações; imprime aviso amarelo quando há divergência além de
+    R$ 0,01, ou quando o total não foi extraído (usa soma como
+    fallback e avisa).
+  - Removida a auto-correção silenciosa `valor_total = sum(...)` dos 3
+    parsers (Ailos, Nubank, Banco do Brasil) — esse comportamento
+    mascarava bugs reais de extração. Agora o `extrator.py` é a
+    autoridade sobre conciliação.
+  - **Bug real descoberto e corrigido**: a regex do parser Ailos
+    capturava `"4,422.81."` (com ponto final), e `parse_valor_brl`
+    devolvia `None` → o total da fatura nunca era extraído. Adicionado
+    `.rstrip(".,")` no início de `parse_valor_brl` para tolerar
+    pontuação trailing herdada de capturas amplas. Verificado também
+    que o caso `"1.234.56"` (ponto como milhar + decimal, descrito no
+    HANDOFF) **não ocorre** nos PDFs Ailos reais — o formato real é o
+    americano `"1,234.56"`.
+  - Validação: 4 cenários sintéticos (bate, total > soma, total < soma,
+    total ausente) + execução real nos 2 PDFs sem avisos espúrios.
 
 - **5.10 — Excel único acumulativo + pastas `entrada/`/`saida/`**
   - `extrator.py` reescrito: PDFs lidos por padrão de `entrada/`,

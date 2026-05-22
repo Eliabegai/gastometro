@@ -63,8 +63,6 @@ def extrair(caminho_pdf: Path) -> Fatura:
     ano = _ano_do_vencimento(metadata.data_vencimento)
     transacoes = _extrair_transacoes(texto_completo, ano)
 
-    if metadata.valor_total == 0 and transacoes:
-        metadata.valor_total = sum(t.valor for t in transacoes)
     return Fatura(metadata=metadata, transacoes=transacoes)
 
 
