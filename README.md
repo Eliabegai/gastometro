@@ -147,19 +147,46 @@ Concluído.
 ## Categorias
 
 As regras ficam em `categorias.py`. Cada categoria é uma lista de
-palavras-chave (case-insensitive). Para criar uma nova categoria ou
-refinar a classificação, edite esse arquivo:
+palavras-chave. A comparação ignora maiúsculas, acentos e espaços
+extras, e exige boundary semântico (a keyword precisa estar entre
+não-alfanuméricos) — `raia` não casa `RAIANE OFICINA`.
 
 ```python
 CATEGORIAS = {
-    "Mercado": ["supermerc", "mercado", "rancho bom", ...],
-    "Combustível": ["posto", "shell", "ipiranga", ...],
-    "Farmácia": ["raia", "drogasil", "panvel", ...],
+    "Mercado": [
+        "supermerc*",        # prefix match: casa "supermercado", "supermerc 5"
+        "mercado",           # estrito: NAO casa "mercadolivre", "mercado pago"
+        "!mercado pago",     # regra negativa: cancela a categoria
+        "!mercadolivre",
+        "rancho bom",
+        "kompra*", "kompro*",
+        "big",               # casa "BIG SUPERMERC" mas NAO "BIGODE"
+        "!bigode*",          # garante que BIGODE nao caia em Mercado
+        ...
+    ],
+    "Combustível": ["posto*", "autoposto*", "shell*", "ipiranga", ...],
+    "Farmácia":    ["raia", "drogaria*", "panvel*", ...],
     ...
 }
 ```
 
-Transações que não casarem com nenhuma palavra-chave caem em **"Outros Gastos"**.
+Convenções:
+
+- **Sem sufixo** (`mercado`, `raia`, `big`) — casamento estrito: a
+  keyword precisa estar isolada por não-alfanuméricos. Letras antes
+  ou depois invalidam o match; dígitos depois são aceitos (logo
+  `RAIA` casa `RAIA419` mas não `RAIANE`).
+- **Sufixo `*`** (`posto*`, `shell*`, `kompra*`) — prefix match: a
+  keyword pode ser o **começo** de uma palavra maior, útil para
+  descrições concatenadas comuns em fatura
+  (`POSTOZ19`, `SHELLBO`, `KOMPRAO ATACADISTA`).
+- **Prefixo `!`** (`!mercado pago`, `!bigode*`) — regra negativa:
+  se a keyword excluída casar, a categoria atual é descartada
+  mesmo que outras keywords positivas tenham casado.
+
+A primeira categoria com pelo menos uma keyword positiva e nenhuma
+negativa casando vence. Transações que não casarem com nenhuma
+caem em **"Outros Gastos"**.
 
 ### Top 'Outros Gastos' no terminal
 

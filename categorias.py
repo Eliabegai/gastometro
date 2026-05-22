@@ -1,22 +1,43 @@
 """
 Regras de categorização das transações.
 
-Cada categoria possui uma lista de palavras-chave (case-insensitive) que,
-quando encontradas na descrição da transação, classificam-na naquela categoria.
+Cada categoria possui uma lista de palavras-chave que são procuradas na
+descrição da transação. A comparação é tolerante a maiúsculas, acentos e
+espaços extras; a palavra-chave precisa aparecer como **token completo**
+(entre não-alfanuméricos), evitando falsos positivos por substring (o
+keyword `raia` não casa `RAIANE OFICINA`, `big` não casa `BIGODE
+LANCHES`).
 
-Para adicionar/ajustar categorias, basta editar o dicionário CATEGORIAS abaixo.
-A ordem importa: a primeira categoria que casar é usada.
+Convenções no dicionário:
+  - `"raia"`             → casamento estrito: precisa estar entre não
+                          alfanuméricos (não casa `RAIANE`, mas casa
+                          `RAIA 419` e `RAIA-DROG`). Use para palavras
+                          que possam virar substring acidental em
+                          outras palavras (raia, big, mercado, ...).
+  - `"posto*"`           → prefix match: a keyword pode ser o começo
+                          de uma palavra maior (`posto*` casa `posto`,
+                          `postos`, `POSTOZ19`, `POSTO BR`). Use para
+                          marcas/sufixos comuns em fatura
+                          (`shell*`, `komprao*`, `youtube*`,
+                          `spotify*`, `descomplica*`, ...).
+  - `"!mercado pago"`    → palavra a EXCLUIR. Se aparecer na descrição,
+                          a categoria atual é descartada (mesmo que
+                          outra keyword positiva casaria).
 
-O usuário pode também criar um arquivo `categorias_usuario.json` na raiz do
-projeto (fora do versionamento) com overrides manuais no formato
+A regra "estrita vs prefix" se aplica apenas ao **final** da keyword;
+o início **sempre** exige boundary (não-alfanumérico antes ou começo
+de string), garantindo que `mercado` em `EOMERCADO` não case.
+
+O usuário pode também criar um arquivo `categorias_usuario.json` na raiz
+do projeto (fora do versionamento) com overrides manuais no formato
 `{"descrição": "Categoria"}`. Esses overrides têm precedência sobre o
-dicionário fixo; a comparação é feita após normalização (lowercase + sem
-acentos + espaços colapsados).
+dicionário fixo; a comparação é feita após a mesma normalização.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
@@ -27,8 +48,9 @@ CATEGORIAS_USUARIO_ARQUIVO = Path(__file__).parent / "categorias_usuario.json"
 
 CATEGORIAS = {
     "Combustível": [
-        "posto",
-        "shell",
+        "posto*",
+        "autoposto*",
+        "shell*",
         "ipiranga",
         "petrobras",
         "br mania",
@@ -37,37 +59,45 @@ CATEGORIAS = {
         "petropen",
     ],
     "Mercado": [
-        "supermerc",
+        "supermerc*",
         "mercado",
+        "!mercado pago",
+        "!mercado livre",
+        "!mercadolivre",
+        "!mercado libre",
         "rancho bom",
-        "kompra",
+        "kompra*",
+        "kompro*",
         "cooper filial",
         "hortifruti",
-        "atacad",
+        "atacad*",
         "big",
+        "!bigode*",
         "carrefour",
         "assai",
         "fort atacad",
         "angeloni",
         "giassi",
+        "condor*",
+        "eskimo*",
     ],
     "Alimentação": [
-        "restaurante",
-        "pizzaria",
-        "pizzar",
-        "lanchonete",
-        "padaria",
-        "cafe",
-        "café",
-        "burger",
-        "mcdonald",
+        "restaurante*",
+        "pizzar*",
+        "lanchonete*",
+        "padaria*",
+        "panificadora*",
+        "cafe*",
+        "café*",
+        "burger*",
+        "mcdonald*",
         "mc donald",
         "subway",
         "ifood",
         "rappi",
         "uber eats",
         "confeitaria",
-        "docesabor",
+        "docesabor*",
         "doce sabor",
         "rodosnack",
         "tulipa",
@@ -77,63 +107,63 @@ CATEGORIAS = {
         "lounge",
     ],
     "Farmácia": [
-        "farmacia",
-        "farmácia",
-        "drogaria",
+        "farmacia*",
+        "farmácia*",
+        "drogaria*",
         "drogasil",
         "pague menos",
         "raia",
-        "panvel",
-        "ultrafarma",
+        "panvel*",
+        "ultrafarma*",
     ],
     "Saúde": [
-        "hospital",
-        "clinica",
-        "clínica",
-        "laboratorio",
-        "laboratório",
+        "hospital*",
+        "clinica*",
+        "clínica*",
+        "laboratorio*",
+        "laboratório*",
         "consulta",
         "dentista",
-        "odonto",
-        "psicolog",
-        "fisio",
+        "odonto*",
+        "psicolog*",
+        "fisio*",
         "mapfre seguros",
-        "unimed",
+        "unimed*",
         "amil",
         "bradesco saude",
     ],
     "Lazer": [
-        "cinema",
+        "cinema*",
     ],
     "Assinatura Digital": [
         "netflix",
-        "spotify",
+        "spotify*",
+        "youtube*",
         "prime video",
-        "hbo",
-        "disney",
+        "hbo*",
+        "disney*",
         "apple combill",
         "apple.com/bill",
         "google play",
-        "microsoft",
+        "microsoft*",
         "sky",
     ],
     "Compra Digital": [
-        "steam",
-        "playstation",
-        "xbox",
-        "applecombill",
+        "steam*",
+        "playstation*",
+        "xbox*",
+        "applecombill*",
         "apple.com/bill",
         "google play",
-        "shopee",
-        "amazon",
-        "amazonmkt",
-        "magazineluiza",
+        "shopee*",
+        "amazon*",
+        "magazineluiz*",
         "magalu",
-        "mercadolivre",
-        "kodadeck",
+        "mercadolivre*",
         "mercado livre",
+        "mercadopago*",
         "mercado pago",
-        "mercado pago",
+        "kodadeck",
     ],
     "Vestuário": [
         "c e a",
@@ -147,21 +177,23 @@ CATEGORIAS = {
         "zara",
     ],
     "Transporte": [
-        "uber",
+        "uber*",
         "99 ",
         "99app",
         "cabify",
         "taxi",
-        "estapar",
-        "estacionamento",
-        "mecanica",
-        "mecânica",
-        "oficina",
+        "estapar*",
+        "estacionamento*",
+        "epar estacionament*",
+        "mecanica*",
+        "mecânica*",
+        "oficina*",
+        "autoeletrica*",
     ],
     "Casa e Construção": [
         "casa dos tubos",
         "tecnopan",
-        "leroy",
+        "leroy*",
         "telhanorte",
         "lojao da marechal",
         "construcao",
@@ -170,31 +202,80 @@ CATEGORIAS = {
         "monte carlo",
     ],
     "Educação": [
-        "escola",
-        "faculdade",
-        "universidade",
+        "escola*",
+        "faculdade*",
+        "universidade*",
         "udemy",
         "alura",
-        "curso",
-        "livraria",
+        "curso*",
+        "livraria*",
+        "descomplica*",
     ],
     "Serviços / Assinaturas": [
-        "anuidade",
-        "tarifa",
-        "mensalidade",
-        "seguro",
+        "anuidade*",
+        "tarifa*",
+        "mensalidade*",
+        "seguro*",
     ],
 }
 
 
 def _normalizar(texto: str) -> str:
     """Normaliza a descrição para comparação tolerante a maiúsculas, acentos
-    e espaços extras. Usado para casar overrides do usuário."""
+    e espaços extras. Usado tanto para casar overrides do usuário quanto
+    palavras-chave do dicionário."""
     if not texto:
         return ""
     nfd = unicodedata.normalize("NFD", texto)
     sem_acentos = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
     return " ".join(sem_acentos.lower().split())
+
+
+def _padrao_token_completo(palavra_normalizada: str) -> re.Pattern[str]:
+    """Compila um padrão para casar uma keyword na descrição normalizada.
+
+    Regras:
+      - O início **sempre** exige boundary (não-alfanumérico ou começo
+        de string) — evita falsos positivos por meio de palavra
+        (`EOMERCADO` não casa `mercado`).
+      - O final é estrito por padrão (não permite letra depois), mas
+        admite dígitos (`RAIA` casa `RAIA419`; `RAIANE` não).
+      - Quando a keyword termina em `*`, vira prefix match e a
+        continuação por letra/dígito é permitida (`shell*` casa
+        `SHELLBO`, `posto*` casa `POSTOZ19`).
+    """
+    prefix_match = palavra_normalizada.endswith("*")
+    if prefix_match:
+        palavra_normalizada = palavra_normalizada[:-1].rstrip()
+    if not palavra_normalizada:
+        return re.compile(r"(?!)")
+    sufixo = "" if prefix_match else r"(?![a-z])"
+    return re.compile(
+        r"(?<![a-z0-9])" + re.escape(palavra_normalizada) + sufixo
+    )
+
+
+@lru_cache(maxsize=1)
+def _regras_compiladas() -> tuple[tuple[str, tuple[re.Pattern[str], ...], tuple[re.Pattern[str], ...]], ...]:
+    """Pré-compila as listas de palavras-chave em padrões regex, separando
+    inclusões das exclusões (prefixadas por `!`)."""
+    regras: list[tuple[str, tuple[re.Pattern[str], ...], tuple[re.Pattern[str], ...]]] = []
+    for categoria, palavras in CATEGORIAS.items():
+        incluir: list[re.Pattern[str]] = []
+        excluir: list[re.Pattern[str]] = []
+        for raw in palavras:
+            kw = raw.strip()
+            if not kw:
+                continue
+            negativa = kw.startswith("!")
+            if negativa:
+                kw = kw[1:].strip()
+            if not kw:
+                continue
+            padrao = _padrao_token_completo(_normalizar(kw))
+            (excluir if negativa else incluir).append(padrao)
+        regras.append((categoria, tuple(incluir), tuple(excluir)))
+    return tuple(regras)
 
 
 @lru_cache(maxsize=1)
@@ -215,14 +296,22 @@ def _carregar_categorias_usuario() -> dict[str, str]:
 def categorizar_pelo_dicionario(descricao: str) -> str:
     """Aplica apenas o dicionário fixo `CATEGORIAS`, ignorando os overrides
     do usuário. Útil para descobrir o que o dicionário sozinho devolveria
-    (por exemplo, ao detectar overrides manuais ao aprender de um Excel)."""
+    (por exemplo, ao detectar overrides manuais ao aprender de um Excel).
+
+    A primeira categoria com pelo menos uma palavra-chave de inclusão
+    casando E nenhuma palavra-chave de exclusão casando vence. A
+    comparação é feita após normalização (sem acentos, lower, espaços
+    colapsados) e exige que a palavra-chave apareça como token completo
+    (cercada por não-alfanuméricos)."""
     if not descricao:
         return "Outros Gastos"
-    texto = descricao.lower()
-    for categoria, palavras in CATEGORIAS.items():
-        for palavra in palavras:
-            if palavra.lower() in texto:
-                return categoria
+    norm = _normalizar(descricao)
+    for categoria, incluir, excluir in _regras_compiladas():
+        if not any(p.search(norm) for p in incluir):
+            continue
+        if any(p.search(norm) for p in excluir):
+            continue
+        return categoria
     return "Outros Gastos"
 
 

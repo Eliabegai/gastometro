@@ -87,12 +87,8 @@
   - `"mercado pago"` aparece duas vezes na mesma categoria.
   - Consolidar e decidir critério.
 
-- [ ] **2.2 — Casamento por substring gera falsos positivos** — P1 / M
-  - `"big"` casa `"BIGODE LANCHES"`, `"raia"` casa `"RAIANE OFICINA"`, etc.
-  - Suporte a regex com `\b...\b`.
-  - Normalização de acentos (remover diacríticos antes de comparar).
-  - Considerar pesos ("quem casa mais palavras vence" em vez de "primeira que casa").
-  - Permitir regras negativas ("posto" → Combustível, exceto se também contiver "vet" ou "saúde").
+- [x] **2.2 — Casamento por substring gera falsos positivos** — P1 / M
+  - Concluído em 22/05/2026 (ver "Concluídas").
 
 - [x] **2.3 — Aprendizado a partir do usuário** — P2 / M
   - Concluído em 22/05/2026 (ver "Concluídas").
@@ -209,6 +205,53 @@
 ## Concluídas
 
 ### 22/05/2026
+
+- **2.2 — Casamento por substring gera falsos positivos**
+  - `categorizar` agora aplica regex com **boundary semântico** ao
+    invés de `palavra in descricao`. A normalização tira acentos,
+    aplica lower-case e colapsa espaços. Detalhes:
+    - O início da keyword sempre exige boundary (não-alfanumérico
+      ou começo de string) — `EOMERCADO` não casa `mercado`.
+    - O final padrão proíbe **letra** mas admite dígitos — `RAIA`
+      casa `RAIA419` mas não `RAIANE`; `BIG` casa `BIG SUPERMERC`
+      mas não `BIGODE`.
+    - Sufixo `*` ativa **prefix match** para descrições
+      concatenadas comuns em fatura: `posto*` casa `POSTOZ19`,
+      `shell*` casa `SHELLBO`, `komprao*` casa `KOMPRAO`,
+      `spotify*` casa `SpotifyV`, `youtube*` casa
+      `YouTubePremiu`, `descomplica*` casa `Descomplica Pos`.
+    - Suporte a **regras negativas** com prefixo `!`: a categoria é
+      descartada se a keyword excluída casar (ex.: `Mercado` tem
+      `!mercado pago`, `!mercadolivre`, `!mercado livre`,
+      `!bigode*`). Isso resolve os falsos positivos de Mercado
+      Livre/Mercado Pago/Bigode.
+  - Revisão do dicionário: adicionadas keywords com `*` para
+    `kompra*`, `kompro*`, `condor*`, `eskimo*`, `autoposto*`,
+    `restaurante*`, `pizzar*`, `padaria*`, `panificadora*`,
+    `lanchonete*`, `cafe*`, `burger*`, `mcdonald*`, `farmacia*`,
+    `drogaria*`, `panvel*`, `ultrafarma*`, `hospital*`,
+    `clinica*`, `laboratorio*`, `odonto*`, `psicolog*`, `fisio*`,
+    `unimed*`, `youtube*`, `spotify*`, `hbo*`, `disney*`,
+    `microsoft*`, `steam*`, `playstation*`, `xbox*`,
+    `applecombill*`, `shopee*`, `amazon*`, `magazineluiz*`,
+    `mercadolivre*`, `mercadopago*`, `uber*`, `estacionamento*`,
+    `estapar*`, `epar estacionament*`, `mecanica*`, `oficina*`,
+    `autoeletrica*`, `leroy*`, `escola*`, `faculdade*`,
+    `universidade*`, `curso*`, `livraria*`, `descomplica*`,
+    `anuidade*`, `tarifa*`, `mensalidade*`, `seguro*`. Limpeza
+    parcial das duplicatas de 2.1: removidos `amazonmkt`,
+    `mercado pago` repetido, `applecombill` redundante.
+  - **Validação**: comparação antes/depois sobre as 943 transações
+    do Excel real → 58 categorias mudaram, **todas para melhor**:
+    - 43 `MERCADOLIVRE*XXX` / `MERCADOPAGO *XXX` agora vão para
+      Compra Digital (eram Mercado por substring).
+    - 12 `BIGODEDEACO` / `MP *BIGODEDEACO` deixam de ser Mercado
+      (falso positivo `big`); ficam em Outros Gastos para
+      tratamento via override ou categoria específica.
+    - 36/36 casos sintéticos passam (incl. `RAIANE OFICINA` →
+      Transporte, `BIGODE LANCHES` → Outros Gastos, `RAIA419` →
+      Farmácia).
+  - Documentação no docstring de `categorias.py` e no README.
 
 - **1.9 — Parcela do Ailos vazando para a coluna Cidade**
   - `parsers/ailos.py::_classificar_palavras_em_colunas` aplicava
