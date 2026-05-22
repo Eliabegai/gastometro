@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import pdfplumber
@@ -121,8 +122,7 @@ def _ano_do_vencimento(data_vencimento: str) -> int:
     m = re.match(r"\d{2}/\d{2}/(\d{4})", data_vencimento)
     if m:
         return int(m.group(1))
-    import pandas as pd
-    return pd.Timestamp.now().year
+    return date.today().year
 
 
 def _eh_administrativa(descricao: str) -> bool:

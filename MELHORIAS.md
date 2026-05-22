@@ -37,9 +37,8 @@
 - [x] **1.4 — Remover dados pessoais de `PALAVRAS_NAO_TITULAR`** — P0 / XS
   - Concluído em 22/05/2026 (ver "Concluídas").
 
-- [ ] **1.5 — `import pandas` dentro de função (3 lugares)** — P3 / XS
-  - `parsers/ailos.py:126`, `parsers/nubank.py:117`, `parsers/banco_brasil.py:100`.
-  - Trocar por `datetime.date.today().year` (stdlib).
+- [x] **1.5 — `import pandas` dentro de função (3 lugares)** — P3 / XS
+  - Concluído em 22/05/2026 (ver "Concluídas").
 
 - [ ] **1.6 — PDF lido duas vezes (detecção + extração)** — P2 / S
   - `parsers/__init__.py::detectar_banco` + `extrair_fatura` chamam `_ler_texto` independentemente.
@@ -176,6 +175,16 @@
 ## Concluídas
 
 ### 22/05/2026
+
+- **1.5 — Substituído `import pandas` por `datetime.date` nos parsers**
+  - Os três parsers (Ailos, Nubank, BB) usavam `pd.Timestamp.now().year`
+    apenas como fallback do ano de vencimento, importando `pandas`
+    dentro da função. Trocado por `datetime.date.today().year` (stdlib),
+    com `from datetime import date` no topo do módulo.
+  - A função `_ano_do_vencimento` ainda está triplicada nos 3 parsers —
+    consolidar em `parsers/base.py` está mapeado como item 4.2.
+  - Validação: extração nos PDFs reais segue idêntica (48 + 10
+    transações); fallback testado retornando o ano atual correto.
 
 - **1.3 — Avisar quando soma diverge do total da fatura**
   - Novo helper `_conciliar_total` em `extrator.py` comparando o
