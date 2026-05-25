@@ -310,10 +310,36 @@ gastometro/
 │   ├── ailos.py           # parser Ailos Mastercard
 │   ├── nubank.py          # parser Nubank
 │   └── banco_brasil.py    # parser Banco do Brasil (Ourocard)
+├── tests/                 # suite pytest (parse_valor_brl, categorias, inferencia)
 ├── requirements.txt
+├── requirements-dev.txt   # requirements.txt + pytest
 ├── README.md              # este arquivo
 └── MELHORIAS.md           # backlog vivo de melhorias (priorizado)
 ```
+
+## Testes
+
+A suite usa `pytest` e roda em segundos. Instale as dependências de
+desenvolvimento e rode na raiz:
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+Os testes cobrem:
+
+- `parse_valor_brl` — formatos BR e americano, negativos, trailing
+  punctuation e entradas inválidas.
+- `categorizar` — ≥2 positivos por categoria, boundaries semânticos
+  (`raia` vs `RAIANE`), prefix match (`*`), regras negativas (`!`),
+  overrides do usuário e `salvar_categorias_usuario`.
+- `inferir_ano_transacao` e `referencia_pelo_vencimento` — viradas
+  de ano (compras de dezembro em fatura de janeiro) e recuo por
+  número de parcela para parcelamentos longos da Ailos.
+
+Cada teste roda com um `categorias_usuario.json` temporário, isolado
+do arquivo real do usuário.
 
 ## Como adicionar suporte a outro banco
 
@@ -332,5 +358,4 @@ e status). Destaques:
 - Aba `Maiores Gastos` (top transações individuais) e aba `Estornos`
   dedicada.
 - Variação % vs mês anterior no Resumo Mensal.
-- Testes automatizados com `pytest`.
 - Suporte a Itaú, Bradesco, Inter e C6.

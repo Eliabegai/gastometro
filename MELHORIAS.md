@@ -101,15 +101,17 @@
 
 ## 3. Testes automatizados
 
-- [ ] **3.1 — Setup do pytest** — P1 / XS
-  - Pasta `tests/`, `pytest` em dev-requirements (ou extras `[dev]` no `pyproject.toml`).
+- [x] **3.1 — Setup do pytest** — P1 / XS
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
-- [ ] **3.2 — Testes de `parse_valor_brl`** — P1 / S
+- [x] **3.2 — Testes de `parse_valor_brl`** — P1 / S
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
-- [ ] **3.3 — Testes de `categorizar`** — P1 / S
-  - Pelo menos 2 positivos e 1 negativo por categoria.
+- [x] **3.3 — Testes de `categorizar`** — P1 / S
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
-- [ ] **3.4 — Testes de `referencia_pelo_vencimento` e ano por parcela** — P1 / XS
+- [x] **3.4 — Testes de `referencia_pelo_vencimento` e ano por parcela** — P1 / XS
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [ ] **3.5 — Smoke tests dos parsers com fixtures de texto** — P2 / M
   - Salvar o texto bruto extraído de cada PDF de teste em `tests/fixtures/*.txt` e validar contagem/total.
@@ -202,8 +204,8 @@
 - [x] **7.1 — Limpar dados pessoais do código** — P0 / XS
   - Duplicado do 1.4. Concluído em 22/05/2026.
 
-- [ ] **7.2 — Verificar histórico do git por PDFs commitados** — P1 / XS
-  - `git log --all -- '*.pdf' '*.xlsx'` para confirmar que nunca vazaram.
+- [x] **7.2 — Verificar histórico do git por PDFs commitados** — P1 / XS
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [ ] **7.3 — `pre-commit` hook bloqueando dados sensíveis** — P2 / S
   - Mesma ideia do 6.3.
@@ -224,6 +226,82 @@
 ---
 
 ## Concluídas
+
+### 25/05/2026 (Bloco A — fundação de testes)
+
+- **3.1 — Setup do pytest**
+  - Criada pasta `tests/` com `__init__.py` e `conftest.py`. O conftest
+    insere a raiz no `sys.path` (sem precisar instalar o pacote) e um
+    fixture `autouse` aponta `categorias.CATEGORIAS_USUARIO_ARQUIVO`
+    para um JSON temporário em cada teste — isola o suite do
+    `categorias_usuario.json` real do usuário e zera os caches
+    `lru_cache` de `_regras_compiladas`/`_carregar_categorias_usuario`
+    antes e depois.
+  - Novo `requirements-dev.txt` com `-r requirements.txt` + `pytest>=8`.
+  - Executar: `python -m pytest -q` na raiz do projeto.
+
+- **3.2 — Testes de `parse_valor_brl`** (`tests/test_parse_valor_brl.py`)
+  - 6 classes cobrindo formato BR (`1.234,56`), formato americano usado
+    na Ailos (`1,234.56`, `4,422.81`), símbolo `R$` (com/sem espaço),
+    negativos (`-R$ 50,00`, unicode `\u2212`), trailing punctuation
+    (`4,422.81.`, `1.234,56,`, `99,00,.,`), entradas inválidas
+    (`None`, vazia, só símbolo, só pontuação) e o zero (BR + US).
+  - 27 testes no total — protegem contra regressão do bug de trailing
+    period que foi corrigido junto com o item 1.3.
+
+- **3.3 — Testes de `categorizar`** (`tests/test_categorias.py`)
+  - **Smoke positivo**: 38 cenários parametrizados cobrindo ≥2
+    descrições por categoria (Combustível, Mercado, Alimentação,
+    Farmácia, Saúde, Lazer, Assinatura Digital, Compra Digital,
+    Vestuário, Manutenção Carro, Transporte, Casa e Construção,
+    Educação, Seguro, Serviços / Assinaturas).
+  - **Boundary semântico**: `RAIANE OFICINA` não vira Farmácia,
+    `BIGODE LANCHES` cai em Alimentação (não em Mercado por causa do
+    `big`), `EOMERCADO XPTO` não casa `mercado` por substring.
+  - **Prefix match `*`**: `POSTOZ19`, `SHELLBO`, `LANCHONETE` (todos
+    para a categoria certa).
+  - **Regras negativas `!`**: `MERCADO PAGO BR` → Compra Digital
+    (não Mercado), `MERCADO LIVRE COMPRA` idem, e `SUPERMERCADO
+    ANGELONI` continua Mercado.
+  - **Fallback**: descrição vazia, `None`, texto sem keyword caem em
+    "Outros Gastos".
+  - **Normalização**: acentos, caixa baixa e espaços extras.
+  - **Overrides do usuário**: precedem o dicionário; chave do JSON é
+    normalizada; `categorizar_pelo_dicionario` ignora overrides; JSON
+    corrompido não quebra.
+  - **`salvar_categorias_usuario`**: persiste, normaliza chaves,
+    descarta valores vazios/branco e invalida o `lru_cache` (a
+    próxima chamada de `categorizar` enxerga a mudança).
+  - 68 testes no total.
+
+- **3.4 — Testes de inferência de ano** (`tests/test_inferencia.py`)
+  - `referencia_pelo_vencimento` (Janeiro/2026, Dezembro/2025,
+    Maio/2026, formato inválido, string vazia).
+  - `ano_do_vencimento` (ano explícito, ano passado, fallback para o
+    ano atual em formato inválido).
+  - `inferir_ano_transacao` **sem recuo** (caso Nubank): dezembro em
+    fatura de janeiro/2026 → 2025; novembro em fatura de janeiro →
+    2025; mesmo mês do vencimento → mesmo ano; parcela é ignorada
+    quando o recuo está desligado.
+  - `inferir_ano_transacao` **com recuo por parcela** (caso Ailos):
+    parcela `16/18` em fatura de maio/2026 com mês de transação
+    janeiro → 2025 (regressão original `MAPFRE 14 JAN 16/18`);
+    parcela `1/12` não recua; parcela `2/12` recua 1 mês; parcela
+    `3/12` dentro do mesmo ano; parcela malformada (`abc`) cai na
+    regra base; parcela vazia também.
+  - Vencimento vazio/malformado devolve um ano plausível (2024–2100)
+    sem lançar exceção.
+  - 14 testes no total.
+
+- **Resultado do suite**: `python -m pytest -q` → **109 passed in 0.18s**.
+
+- **7.2 — Auditoria do histórico git**
+  - `git log --all -- '*.pdf' '*.xlsx'` e `git log --all
+    --pretty=format: --name-only | grep -Ei '\.(pdf|xlsx|xls|csv)$'`
+    → nenhum binário sensível em qualquer commit/branch.
+  - `categorias_usuario.json` também nunca foi commitado.
+  - `.gitignore` já bloqueia `*.pdf`, `*.xlsx` (whitelist `exemplos/`)
+    e `categorias_usuario.json`. **Nada a limpar com BFG/filter-repo.**
 
 ### 25/05/2026
 

@@ -253,6 +253,36 @@ Próximas frentes correlatas mapeadas: 5.12 (`Maiores Gastos`),
 5.13 (`Estornos`), 5.14 (variação % mensal), 5.15 (gráficos por
 cartão).
 
+## 6.3. O que foi feito em 25/05/2026 — Fundação de testes (Bloco A)
+
+- **3.1** — Setup do `pytest` com pasta `tests/`, `conftest.py` que
+  insere a raiz no `sys.path` e isola cada teste do
+  `categorias_usuario.json` real (fixture autouse + cache-clear).
+  Novo `requirements-dev.txt` (`-r requirements.txt` + `pytest>=8`).
+- **3.2** — `tests/test_parse_valor_brl.py` (27 testes): formato BR,
+  formato americano (Ailos), `R$`, negativos com `\u2212`, trailing
+  punctuation (`4,422.81.`), entradas inválidas, zero.
+- **3.3** — `tests/test_categorias.py` (68 testes): smoke positivo
+  para **todas** as 15 categorias do dicionário, boundary semântico
+  (`raia` vs `RAIANE`, `big` vs `BIGODE`), prefix match (`*`),
+  regras negativas (`!mercado pago`), normalização (acentos/caixa),
+  overrides do usuário com precedência, JSON corrompido,
+  `categorizar_pelo_dicionario` ignorando overrides, e
+  `salvar_categorias_usuario` (persistência + cache-clear).
+- **3.4** — `tests/test_inferencia.py` (14 testes):
+  `referencia_pelo_vencimento`, `ano_do_vencimento` e cobertura
+  ampla de `inferir_ano_transacao` com e sem recuo por parcela
+  (regressão `MAPFRE 14 JAN 16/18` em fatura de maio/2026 → 2025).
+- **7.2** — Auditoria do histórico git: `git log --all -- '*.pdf'
+  '*.xlsx'` e varredura de `.csv`/`.xls` em todo o histórico → 0
+  binários sensíveis em qualquer branch. `.gitignore` já protege.
+
+Suite roda em ~0.2s: **109 passed**. Comando padrão:
+
+```bash
+python -m pytest -q
+```
+
 ## 7. Gotchas / armadilhas conhecidas
 
 - **Cidade pode vir truncada**: o PDF da Ailos corta cidades longas
