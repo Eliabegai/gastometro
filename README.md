@@ -35,7 +35,13 @@ python3 -m venv .venv
 source .venv/bin/activate     # macOS / Linux
 # .venv\Scripts\activate      # Windows PowerShell
 
-pip install -r requirements.txt
+# Opção A — instalação editável + ferramentas de dev (recomendado).
+#           Habilita o comando `gastometro` no PATH do venv.
+pip install -e ".[dev]"
+
+# Opção B — só as dependências de runtime (sem entry point CLI).
+#           Aí use `python extrator.py …` em vez de `gastometro …`.
+# pip install -r requirements.txt
 ```
 
 ## Como executar a extração de um PDF
@@ -55,6 +61,38 @@ source .venv/bin/activate      # macOS / Linux
 # .venv\Scripts\activate       # Windows PowerShell
 ```
 
+### Comandos do CLI
+
+Depois da instalação editável (`pip install -e ".[dev]"`), o comando
+`gastometro` fica disponível no `PATH` do venv. Os dois comandos abaixo
+são equivalentes — escolha o estilo que preferir:
+
+```bash
+gastometro [argumentos]        # entry point declarado em pyproject.toml
+python extrator.py [argumentos]  # alternativa sem instalação editável
+```
+
+Referência rápida:
+
+| Comando | O que faz |
+| --- | --- |
+| `gastometro` | Processa **todos** os PDFs de `entrada/` e atualiza `saida/gastometro.xlsx`. |
+| `gastometro entrada/Fatura.pdf` | Processa **um único PDF** específico. |
+| `gastometro ~/Downloads/faturas/` | Processa todos os PDFs de **outra pasta**. |
+| `gastometro recategorizar` | Re-aplica `categorizar()` em todo o Excel (sem reler PDFs). Mantém filtros e tabelas; reconstrói as abas analíticas. |
+| `gastometro recategorizar caminho.xlsx` | Idem, num Excel em local arbitrário. |
+| `gastometro aprender` | Lê edições manuais da coluna `Categoria` no Excel e salva em `categorias_usuario.json` como overrides. |
+| `gastometro aprender caminho.xlsx` | Idem, num Excel em local arbitrário. |
+
+Comandos de qualidade (instalados pelo extra `[dev]`):
+
+```bash
+pytest          # roda a suite (109 testes hoje)
+ruff check .    # lint + imports + upgrades
+ruff check . --fix   # com auto-fix
+mypy .          # checagem de tipos
+```
+
 ### Fluxo padrão (recomendado)
 
 ```bash
@@ -63,7 +101,8 @@ mv ~/Downloads/Fatura_05_2026.pdf entrada/
 mv ~/Downloads/Nubank_2026-05-13.pdf entrada/
 
 # 2) Rode o extrator
-python extrator.py
+gastometro
+# (equivalente: python extrator.py)
 ```
 
 O resultado fica em `saida/gastometro.xlsx`. Cada execução **acumula**
@@ -74,10 +113,10 @@ Excel são ignoradas (mostra "Ignorado (já no Excel)" no terminal).
 
 ```bash
 # Processar um único PDF fora de entrada/
-python extrator.py ~/Downloads/Fatura_05_2026.pdf
+gastometro ~/Downloads/Fatura_05_2026.pdf
 
 # Processar todos os PDFs de outra pasta
-python extrator.py ~/Downloads/faturas/
+gastometro ~/Downloads/faturas/
 ```
 
 Em qualquer modo, a saída sempre vai para `saida/gastometro.xlsx`.
@@ -88,7 +127,7 @@ Se você atualizou as regras de categorização e quer reaplicá-las **só
 nas categorias** sem reler PDFs (mantém filtros/tabelas do Excel):
 
 ```bash
-python extrator.py recategorizar
+gastometro recategorizar
 ```
 
 Detalhes na seção "[Recategorizar o Excel inteiro](#recategorizar-o-excel-inteiro-recategorizar)" mais abaixo.
@@ -99,7 +138,7 @@ extraída errada e o parser mudou):
 1. Abra `saida/gastometro.xlsx`.
 2. Apague a linha dessa fatura na aba **Informações** e todas as
    transações dela na aba **Transações** (filtrar por `Arquivo`).
-3. Salve e rode `python extrator.py` novamente.
+3. Salve e rode `gastometro` novamente.
 
 Para começar do zero: apague `saida/gastometro.xlsx` e rode de novo.
 
@@ -280,7 +319,7 @@ Para corrigir casos isolados sem inflar `categorias.py`, edite a coluna
 **Categoria** no Excel gerado, salve, e rode:
 
 ```bash
-python extrator.py aprender
+gastometro aprender
 ```
 
 O extrator compara cada linha com o resultado do dicionário fixo e grava
@@ -297,7 +336,7 @@ extras.
 A coluna `Categoria` é **gravada como texto literal** no Excel no
 momento em que cada fatura é processada — não é uma fórmula. Por isso,
 quando você edita `categorias.py` ou `categorias_usuario.json` e roda
-`python extrator.py`, as **linhas antigas continuam com as categorias
+`gastometro`, as **linhas antigas continuam com as categorias
 de quando foram inseridas** (apenas faturas novas usam as regras
 atualizadas).
 
@@ -305,8 +344,8 @@ Para propagar as regras atuais para todo o Excel sem precisar apagar o
 arquivo e reprocessar PDFs:
 
 ```bash
-python extrator.py recategorizar                       # usa saida/gastometro.xlsx
-python extrator.py recategorizar caminho/arquivo.xlsx  # arquivo específico
+gastometro recategorizar                       # usa saida/gastometro.xlsx
+gastometro recategorizar caminho/arquivo.xlsx  # arquivo específico
 ```
 
 O comando:
@@ -324,12 +363,12 @@ O comando:
   `antiga → nova : quantidade`.
 
 > **Atenção**: edições manuais que você fez na coluna `Categoria` do
-> Excel e que **ainda não foram capturadas** via `python extrator.py
-> aprender` serão sobrescritas. Fluxo seguro:
+> Excel e que **ainda não foram capturadas** via `gastometro aprender`
+> serão sobrescritas. Fluxo seguro:
 >
 > ```bash
-> python extrator.py aprender        # salva edicoes do Excel no JSON
-> python extrator.py recategorizar   # propaga JSON + dicionario p/ tudo
+> gastometro aprender        # salva edicoes do Excel no JSON
+> gastometro recategorizar   # propaga JSON + dicionario p/ tudo
 > ```
 
 ## Estrutura do projeto
