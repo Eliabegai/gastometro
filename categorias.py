@@ -116,6 +116,7 @@ CATEGORIAS = {
         "dlara",
         "zoet",
         "lounge",
+        "tecnopan*",
     ],
     "Farmácia": [
         "farmacia*",
@@ -225,7 +226,6 @@ CATEGORIAS = {
     "Casa e Construção": [
         "casa dos tubos",
         "casa das tintas",
-        "tecnopan*",
         "leroy*",
         "telhanorte",
         "lojao da marechal",
