@@ -138,8 +138,8 @@
 
 ## 5. Features
 
-- [ ] **5.1 — Consolidação multi-fatura** — P1 / M
-  - Excel mestre com aba `Consolidado` (todas as transações de N PDFs) + `Comparativo` (categoria × mês).
+- [x] **5.1 — Consolidação multi-fatura** — P1 / M
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [x] **5.2 — Gráficos no Excel** — P2 / S
   - Concluído em 25/05/2026 (ver "Concluídas").
@@ -150,15 +150,14 @@
 - [x] **5.12 — Aba `Maiores Gastos` (top transações individuais)** — P2 / XS
   - Concluído em 25/05/2026 (ver "Concluídas").
 
-- [ ] **5.13 — Aba `Estornos` dedicada** — P3 / XS
-  - Lista todas as transações com `Valor < 0` (créditos recebidos),
-    facilita conferência.
+- [x] **5.13 — Aba `Estornos` dedicada** — P3 / XS
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [x] **5.14 — Variação % vs mês anterior no Resumo Mensal** — P2 / S
   - Concluído em 25/05/2026 (ver "Concluídas").
 
-- [ ] **5.15 — Tendência por cartão (gráfico de linha)** — P3 / S
-  - Mostra evolução mensal de cada cartão lado a lado. Depende de 5.2.
+- [x] **5.15 — Tendência por cartão (gráfico de linha)** — P3 / S
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [ ] **5.3 — Interface Streamlit** — P2 / M
   - Drag-and-drop de PDF, baixar Excel.
@@ -224,6 +223,63 @@
 ---
 
 ## Concluídas
+
+### 25/05/2026 (Bloco C — Estornos, Comparativo e tendência por cartão)
+
+- **5.13 — Aba `Estornos`**
+  - Nova função `_construir_estornos(df)` em `extrator.py` que
+    filtra `Valor (R$) < 0` e ordena pelas referências mais
+    recentes, desempate pelo |valor| (estornos grandes primeiro).
+    Colunas: `Data, Referência, Descrição, Categoria, Cartão,
+    Cidade, Valor (R$), Arquivo`.
+  - Aba registrada em `ABAS_COM_FILTRO` (filtro nativo do Excel).
+  - **Validação real**: 14 estornos no Excel — `DESC ANUIDADE POR
+    USO` (Ailos, vários meses), `MERCADOLIVRE*TOTALMO -R$ 39,99`
+    em Abril/2026 (regressão do item 1.7), `Estorno de "Localiza
+    Rac"` -R$ 162,22 em Maio/2024 (regressão do item 1.8 Nubank
+    antigo). Todos com sinal **negativo** preservado.
+
+- **5.1 — Aba `Comparativo` (Categoria × último vs penúltimo mês)**
+  - Nova função `_construir_comparativo(df)` produz a versão
+    tabular do `_imprimir_comparativo_mensal` que vai pro terminal.
+    Colunas: `Categoria, <Penúltimo Mês> (R$), <Último Mês> (R$),
+    Δ Absoluto (R$), Δ %`. Headers das colunas de valor são
+    **dinâmicos** (incluem o nome do mês: `Abril/2026 (R$)` /
+    `Maio/2026 (R$)`).
+  - Ordenada por `|Δ Absoluto|` decrescente — primeiro o que mais
+    mexeu na fatura, mesmo que em percentual seja pequeno. Inclui
+    linha `TOTAL` no fim.
+  - Categorias que não existiam no mês anterior recebem `Δ %`
+    nulo (não dá pra dividir por zero); o terminal já marca esses
+    casos como `(novo)`.
+  - **Fechamento do item 5.1**: o objetivo original era um "Excel
+    mestre com aba Consolidado + Comparativo (categoria × mês)".
+    O `Consolidado` já existia (aba `Transações` agrega todas as
+    faturas desde o item 5.10) e o pivot `categoria × mês` está
+    no `Resumo Mensal` (com `Variação %` desde o Bloco B). A aba
+    `Comparativo` agora fecha o item ao mostrar a versão
+    categórica do último vs penúltimo mês.
+  - **Validação real**: top linhas batem com o terminal:
+    `Alimentação +267.9%`, `Mercado -33.1%`, `Combustível +46.4%`,
+    `TOTAL +9.5%`.
+
+- **5.15 — Gráfico `Tendência por Cartão` (LineChart)**
+  - Nova função `_adicionar_grafico_tendencia_cartoes` desenha um
+    `LineChart` na aba `Cartão x Mês`, abaixo dos dados. Cada
+    cartão (colunas entre `Referência` e `Total`) vira uma série
+    no tempo; X = referências (sem a linha `TOTAL`); dimensões
+    24 × 12 cm.
+  - Helper protege contra dados insuficientes (< 2 meses ou tabela
+    sem colunas de cartão entre `Referência` e `Total`).
+  - **Validação real**: `wb['Cartão x Mês']._charts` → 1
+    `LineChart` com título "Tendência por Cartão".
+
+- **Formatação `_formatar_planilha`** ganhou `R$` como gatilho de
+  formato R$ (necessário para a aba `Comparativo` com colunas tipo
+  `Maio/2026 (R$)` e `Δ Absoluto (R$)`).
+
+- **Idempotência mantida**: 2× `recategorizar` → 0 mudanças, abas
+  e gráficos recriados sem drift.
 
 ### 25/05/2026 (Bloco B — features visíveis no Excel + terminal)
 

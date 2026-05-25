@@ -125,11 +125,18 @@ coluna para fatiar os dados.
   por mês, coluna `Variação %` (variação % do total vs mês anterior)
   e linha `TOTAL` no fim. Inclui **gráfico de barras** "Total Mensal"
   abaixo dos dados.
+- **Comparativo** (filtro): versão tabular do comparativo mensal —
+  uma linha por categoria com `<penúltimo mês> (R$)`, `<último
+  mês> (R$)`, `Δ Absoluto (R$)` e `Δ %`. Ordenada por |Δ| desc,
+  com linha `TOTAL` no fim. Os nomes dos meses no cabeçalho são
+  dinâmicos.
 - **Resumo por Cartão**: uma linha por cartão (`Banco — Titular`) com
   qtde. de faturas, qtde. de transações, primeira/última referência,
   total gasto, média por fatura e ticket médio.
 - **Cartão x Mês**: pivot referência × cartão. Responde "quanto cada
-  cartão gastou em cada mês", com totais por linha e coluna.
+  cartão gastou em cada mês", com totais por linha e coluna. Inclui
+  **gráfico de linha** "Tendência por Cartão" abaixo dos dados,
+  facilitando ver disparos ou quedas individuais.
 - **Cartão x Categoria**: pivot categoria × cartão. Mostra como cada
   cartão se distribui por categoria (útil para decidir qual usar
   para quê).
@@ -138,6 +145,11 @@ coluna para fatiar os dados.
   `Top Comerciantes` (agrupado por descrição), aqui cada linha é
   uma compra isolada — ótimo para revisar parcelas altas, hotéis,
   eletrodomésticos.
+- **Estornos** (filtro): todas as transações com `Valor (R$) < 0`
+  (devoluções, descontos de anuidade, parcelas canceladas).
+  Ordenadas pelas referências mais recentes (e desempate pelo
+  maior valor absoluto). Útil para conferir que os estornos não
+  estão sendo "esquecidos" no meio das demais.
 - **Top Comerciantes** (filtro): top 30 descrições por valor
   acumulado, com categoria, cartão(ões) onde apareceu, qtde. de
   transações, total e ticket médio. Foco em onde o dinheiro

@@ -320,6 +320,26 @@ recebem formato percentual em vez de R$.
 - 2× `python extrator.py recategorizar` → idempotente
   (0 mudanças na 2ª execução, charts/coluna recriados sem drift).
 
+## 6.5. O que foi feito em 25/05/2026 — Bloco C (Estornos, Comparativo, Tendência)
+
+- **5.13** — Aba `Estornos` (`_construir_estornos`): filtra
+  `Valor (R$) < 0`, ordena pelas referências mais recentes (e |Δ|
+  como desempate). 14 estornos validados no Excel real, sinal
+  negativo preservado.
+- **5.1** — Aba `Comparativo` (`_construir_comparativo`):
+  Categoria × `<penúltimo> (R$)`, `<último> (R$)`, `Δ Absoluto`,
+  `Δ %`. Headers dos meses são dinâmicos. Ordenada por |Δ| desc
+  + linha `TOTAL`. Fecha o objetivo original do 5.1 (Consolidado
+  já em `Transações`; pivot categoria × mês em `Resumo Mensal`).
+- **5.15** — `LineChart` "Tendência por Cartão" em `Cartão x Mês`
+  (`_adicionar_grafico_tendencia_cartoes`). Cada cartão = série
+  no tempo, exclui linha `TOTAL`, 24 × 12 cm.
+- **Formatação**: `_formatar_planilha` agora reconhece `R$` no
+  header (necessário para colunas `Abril/2026 (R$)`,
+  `Δ Absoluto (R$)`).
+- Excel passa de 9 para **12 abas** (3 novas) + 3 gráficos
+  embutidos (`PieChart`, `BarChart`, `LineChart`).
+
 ## 7. Gotchas / armadilhas conhecidas
 
 - **Cidade pode vir truncada**: o PDF da Ailos corta cidades longas
