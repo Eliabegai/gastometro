@@ -96,14 +96,42 @@ Para começar do zero: apague `saida/gastometro.xlsx` e rode de novo.
 
 ### Estrutura do Excel gerado
 
-- **Informações**: uma linha por fatura processada (arquivo, banco,
-  titular, referência, fechamento, vencimento, valor total, qtde. de
-  transações).
-- **Transações**: todas as transações de todas as faturas, ordenadas
-  por data, com a coluna `Arquivo` indicando a origem.
+Cada execução regrava o arquivo `saida/gastometro.xlsx` com as
+abas abaixo. Abas marcadas com **(filtro)** têm filtro nativo do
+Excel ativado no cabeçalho — basta clicar na setinha de qualquer
+coluna para fatiar os dados.
+
+- **Informações** (filtro): uma linha por fatura processada (arquivo,
+  banco, titular, **cartão**, referência, fechamento, vencimento, valor
+  total, qtde. de transações).
+- **Transações** (filtro): todas as transações de todas as faturas,
+  ordenadas por data, com colunas `Arquivo`, `Banco`, `Titular`,
+  `Cartão`, `Referência`, `Data`, `Descrição`, `Parcela`, `Cidade`,
+  `Valor (R$)` e `Categoria`. Filtre por cartão para analisar um
+  cartão específico, por categoria para ver só Mercado, etc.
 - **Resumo por Categoria**: soma agregada por categoria + total geral.
-- **Resumo Mensal**: pivot com referência (mês/ano) nas linhas e
-  categorias nas colunas, mais total por mês e linha `TOTAL` no fim.
+- **Resumo Mensal**: pivot referência (mês/ano) × categoria, com total
+  por mês e linha `TOTAL` no fim.
+- **Resumo por Cartão**: uma linha por cartão (`Banco — Titular`) com
+  qtde. de faturas, qtde. de transações, primeira/última referência,
+  total gasto, média por fatura e ticket médio.
+- **Cartão x Mês**: pivot referência × cartão. Responde "quanto cada
+  cartão gastou em cada mês", com totais por linha e coluna.
+- **Cartão x Categoria**: pivot categoria × cartão. Mostra como cada
+  cartão se distribui por categoria (útil para decidir qual usar
+  para quê).
+- **Top Comerciantes** (filtro): top 30 descrições por valor
+  acumulado, com categoria, cartão(ões) onde apareceu, qtde. de
+  transações, total e ticket médio. Foco em onde o dinheiro
+  realmente vai.
+- **Recorrentes** (filtro): descrições que aparecem em pelo menos 3
+  meses distintos, com qtde. de meses, total e média mensal real.
+  Ajuda a mapear gastos fixos (assinaturas, mensalidades, seguros).
+
+> **Cartão** é definido como `Banco — Titular`. Distingue cartões com
+> o mesmo banco mas titulares diferentes e cartões do mesmo titular em
+> bancos diferentes. Excels antigos sem essa coluna são migrados
+> automaticamente na próxima execução, sem precisar reprocessar PDFs.
 
 ### Saída esperada no terminal
 
@@ -251,7 +279,9 @@ Veja `MELHORIAS.md` para o backlog completo (com prioridade, esforço
 e status). Destaques:
 
 - Interface gráfica com `streamlit` para arrastar e soltar PDFs.
-- Consolidação de várias faturas em uma única planilha mensal.
 - Gráficos (barras / pizza) automáticos no Excel.
+- Aba `Maiores Gastos` (top transações individuais) e aba `Estornos`
+  dedicada.
+- Variação % vs mês anterior no Resumo Mensal.
 - Testes automatizados com `pytest`.
 - Suporte a Itaú, Bradesco, Inter e C6.

@@ -139,6 +139,24 @@
 - [ ] **5.2 — Gráficos no Excel** — P2 / S
   - `openpyxl.chart.PieChart` (categorias) e `BarChart` (mensal).
 
+- [x] **5.11 — Relatórios por cartão + abas analíticas + filtros nativos** — P1 / M
+  - Concluído em 23/05/2026 (ver "Concluídas").
+
+- [ ] **5.12 — Aba `Maiores Gastos` (top transações individuais)** — P2 / XS
+  - Top 20 transações por valor (não agrupadas). Útil para revisar
+    compras grandes do período.
+
+- [ ] **5.13 — Aba `Estornos` dedicada** — P3 / XS
+  - Lista todas as transações com `Valor < 0` (créditos recebidos),
+    facilita conferência.
+
+- [ ] **5.14 — Variação % vs mês anterior no Resumo Mensal** — P2 / S
+  - Já mapeado em 5.6, mas agora com a aba pronta dá pra anexar como
+    linha extra (ou aba paralela).
+
+- [ ] **5.15 — Tendência por cartão (gráfico de linha)** — P3 / S
+  - Mostra evolução mensal de cada cartão lado a lado. Depende de 5.2.
+
 - [ ] **5.3 — Interface Streamlit** — P2 / M
   - Drag-and-drop de PDF, baixar Excel.
 
@@ -203,6 +221,72 @@
 ---
 
 ## Concluídas
+
+### 23/05/2026
+
+- **5.11 — Relatórios por cartão + abas analíticas + filtros nativos**
+  - Atende ao pedido "valor separado de cada cartão mensal e por
+    categorias, filtros para ajudar na análise". Cartão é definido como
+    `Banco — Titular`, distinguindo Ailos/Nubank do mesmo titular e
+    cartões do mesmo banco com titulares diferentes (ex.: Nubank do
+    Eliabe vs Nubank da Ana Leticia).
+  - **Coluna `Cartão`** adicionada às abas `Informações` e
+    `Transações`. Calculada via novo helper
+    `extrator._identificador_cartao(banco, titular)`. Continua exibindo
+    `Banco` e `Titular` em colunas separadas (não quebra filtros
+    existentes).
+  - **Retrocompatibilidade**: ao carregar Excel antigo (sem `Cartão`),
+    `_garantir_coluna_cartao` reconstrói a coluna a partir de
+    `Banco`/`Titular` e o extrator regrava o arquivo automaticamente,
+    avisando no terminal. Não exige reprocessar PDFs.
+  - **Novas abas analíticas** (todas criadas em
+    `extrator.salvar_excel_acumulativo`):
+    - **Resumo por Cartão**: uma linha por cartão com `Qtde. Faturas`,
+      `Qtde. Transações`, `Primeira/Última Referência`, `Total Gasto`,
+      `Média por Fatura`, `Ticket Médio`. Inclui linha `TOTAL` no fim.
+    - **Cartão x Mês**: pivot `Referência` × `Cartão`, com `Total`
+      por mês e linha `TOTAL` agregada. Responde "quanto cada cartão
+      gastou em cada mês".
+    - **Cartão x Categoria**: pivot `Categoria` × `Cartão`, ordenado
+      pelo total geral por categoria. Mostra como cada cartão se
+      distribui por categoria (útil para decidir qual usar para
+      quê).
+    - **Top Comerciantes**: top 30 descrições por valor acumulado
+      (ignora estornos via `Valor > 0`). Inclui `Categoria`
+      (moda — categoria mais frequente para aquela descrição),
+      `Cartão(ões)` onde apareceu, qtde. de transações, total e
+      ticket médio.
+    - **Recorrentes**: descrições que aparecem em pelo menos 3 meses
+      distintos (parametrizado em `_construir_recorrentes`). Inclui
+      qtde. de meses, total e média mensal real (`total / meses`).
+      Mapeia gastos fixos (assinaturas, mensalidades, seguros) que
+      escapam aos filtros por valor isolado.
+  - **Filtros nativos do Excel**: `aba.auto_filter.ref` aplicado às
+    abas `Informações`, `Transações`, `Top Comerciantes` e
+    `Recorrentes` (lista em `ABAS_COM_FILTRO`). Permite usar a
+    seta de filtro do Excel em qualquer coluna sem configurar nada.
+  - **Formatação R$**: `_formatar_planilha` expandido para formatar
+    como moeda também colunas `Total`, `Médio`, `Média` (não só
+    `Valor`/`Total` como antes). Pivots `Cartão x …` herdam o
+    tratamento de `Resumo Mensal` (todas as colunas a partir da
+    segunda viram moeda) via constante `ABAS_VALOR_PIVOT`.
+  - **Validação** sobre o Excel real (33 faturas, 916 transações,
+    R$ 76.772,55):
+    - 3 cartões detectados: `Ailos — Eliabe Gai` (15 faturas /
+      R$ 53.197,73), `Nubank — Eliabe Gai` (14 faturas /
+      R$ 16.725,66), `Nubank — Ana Leticia Silva Maciel` (4
+      faturas / R$ 6.849,16).
+    - TOTAL bate entre as três abas pivot
+      (Cartão x Mês, Cartão x Categoria, Resumo por Cartão):
+      R$ 76.772,55 em todas.
+    - Migração do Excel antigo executada sem perda: as 916 linhas
+      antigas mantiveram suas categorias originais (categorizações
+      manuais e overrides via `categorias_usuario.json`).
+  - **Sugestões adicionais registradas como próximas frentes** (não
+    implementadas nesta sessão): 5.12 (`Maiores Gastos` — top
+    transações individuais), 5.13 (`Estornos` em aba dedicada),
+    5.14 (variação % vs mês anterior no Resumo Mensal), 5.15
+    (gráfico de tendência por cartão, depende de 5.2).
 
 ### 22/05/2026
 

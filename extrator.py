@@ -44,6 +44,7 @@ COLUNAS_INFO = [
     "Arquivo",
     "Banco",
     "Titular",
+    "Cartão",
     "Referência",
     "Data de fechamento",
     "Data de vencimento",
@@ -55,6 +56,7 @@ COLUNAS_TRANSACOES = [
     "Arquivo",
     "Banco",
     "Titular",
+    "Cartão",
     "Referência",
     "Data",
     "Descrição",
@@ -67,6 +69,26 @@ COLUNAS_TRANSACOES = [
 MES_POR_NOME = {nome: num for num, nome in MES_POR_NUMERO.items()}
 
 TOLERANCIA_TOTAL = 0.01
+
+ABAS_COM_FILTRO = {"Informações", "Transações", "Top Comerciantes", "Recorrentes"}
+
+
+def _identificador_cartao(banco: str, titular: str) -> str:
+    """Combina banco e titular num rótulo único para distinguir cartões.
+
+    Útil quando o mesmo banco tem cartões de titulares diferentes (ex.: Nubank
+    do João vs Nubank da Maria) ou quando o mesmo titular tem cartões em vários
+    bancos. Formato: `Banco — Titular` (em branco no titular cai em `Banco`).
+    """
+    banco = (banco or "").strip()
+    titular = (titular or "").strip()
+    if not banco and not titular:
+        return ""
+    if not titular:
+        return banco
+    if not banco:
+        return titular
+    return f"{banco} — {titular}"
 
 
 def _conciliar_total(fatura: Fatura) -> None:
@@ -112,10 +134,12 @@ def _conciliar_total(fatura: Fatura) -> None:
 
 def _fatura_para_dicts(fatura: Fatura, arquivo: str) -> tuple[dict, list[dict]]:
     meta = fatura.metadata
+    cartao = _identificador_cartao(meta.banco, meta.titular)
     info = {
         "Arquivo": arquivo,
         "Banco": meta.banco,
         "Titular": meta.titular,
+        "Cartão": cartao,
         "Referência": meta.referencia_mes,
         "Data de fechamento": meta.data_fechamento,
         "Data de vencimento": meta.data_vencimento,
@@ -127,6 +151,7 @@ def _fatura_para_dicts(fatura: Fatura, arquivo: str) -> tuple[dict, list[dict]]:
             "Arquivo": arquivo,
             "Banco": meta.banco,
             "Titular": meta.titular,
+            "Cartão": cartao,
             "Referência": meta.referencia_mes,
             "Data": t.data,
             "Descrição": t.descricao,
@@ -140,29 +165,57 @@ def _fatura_para_dicts(fatura: Fatura, arquivo: str) -> tuple[dict, list[dict]]:
     return info, linhas
 
 
-def _carregar_excel_existente(caminho: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _garantir_coluna_cartao(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula a coluna `Cartão` a partir de `Banco`/`Titular` quando ausente.
+
+    Retrocompatibilidade: Excels gerados antes desta coluna existir são
+    enriquecidos ao serem carregados, evitando que o usuário precise
+    reprocessar tudo do zero.
+    """
+    if df.empty:
+        return df
+    if "Cartão" in df.columns and df["Cartão"].astype(str).str.strip().ne("").any():
+        return df
+    banco = df.get("Banco", pd.Series([""] * len(df))).astype(str)
+    titular = df.get("Titular", pd.Series([""] * len(df))).astype(str)
+    df = df.copy()
+    df["Cartão"] = [_identificador_cartao(b, t) for b, t in zip(banco, titular)]
+    return df
+
+
+def _carregar_excel_existente(
+    caminho: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame, bool]:
     """Lê informações e transações de um Excel acumulativo existente.
 
     Retorna DataFrames vazios (com as colunas esperadas) se o arquivo
-    ainda não existir ou se as abas estiverem incompatíveis.
+    ainda não existir ou se as abas estiverem incompatíveis. O terceiro
+    valor é `True` quando alguma migração de schema foi necessária
+    (ex.: Excel antigo sem coluna `Cartão`), indicando que o arquivo
+    precisa ser regravado mesmo sem faturas novas.
     """
     df_info = pd.DataFrame(columns=COLUNAS_INFO)
     df_transacoes = pd.DataFrame(columns=COLUNAS_TRANSACOES)
+    precisou_migrar = False
     if not caminho.exists():
-        return df_info, df_transacoes
+        return df_info, df_transacoes, precisou_migrar
     try:
         df_info_lido = pd.read_excel(caminho, sheet_name="Informações")
         if "Arquivo" in df_info_lido.columns:
-            df_info = df_info_lido
+            if "Cartão" not in df_info_lido.columns:
+                precisou_migrar = True
+            df_info = _garantir_coluna_cartao(df_info_lido)
     except Exception:
         pass
     try:
         df_t_lido = pd.read_excel(caminho, sheet_name="Transações")
         if "Arquivo" in df_t_lido.columns:
-            df_transacoes = df_t_lido
+            if "Cartão" not in df_t_lido.columns:
+                precisou_migrar = True
+            df_transacoes = _garantir_coluna_cartao(df_t_lido)
     except Exception:
         pass
-    return df_info, df_transacoes
+    return df_info, df_transacoes, precisou_migrar
 
 
 def _ordenar_transacoes(df: pd.DataFrame) -> pd.DataFrame:
@@ -216,13 +269,245 @@ def _construir_resumo_mensal(df_transacoes: pd.DataFrame) -> pd.DataFrame:
     return pivot.reset_index()
 
 
+def _construir_cartao_x_mes(df_transacoes: pd.DataFrame) -> pd.DataFrame:
+    """Pivot referência (linhas) × cartão (colunas), com totais.
+
+    Responde "quanto cada cartão gastou em cada mês". A coluna `Total`
+    soma todos os cartões no mês, e a linha `TOTAL` soma cada cartão no
+    período inteiro.
+    """
+    if df_transacoes.empty:
+        return pd.DataFrame()
+    if "Referência" not in df_transacoes.columns or "Cartão" not in df_transacoes.columns:
+        return pd.DataFrame()
+    pivot = pd.pivot_table(
+        df_transacoes,
+        index="Referência",
+        columns="Cartão",
+        values="Valor (R$)",
+        aggfunc="sum",
+        fill_value=0.0,
+    )
+    referencias_ordenadas = sorted(pivot.index, key=_chave_ordenacao_referencia)
+    pivot = pivot.loc[referencias_ordenadas]
+    pivot["Total"] = pivot.sum(axis=1)
+    pivot.loc["TOTAL"] = pivot.sum(axis=0)
+    return pivot.reset_index()
+
+
+def _construir_cartao_x_categoria(df_transacoes: pd.DataFrame) -> pd.DataFrame:
+    """Pivot categoria (linhas) × cartão (colunas), com totais.
+
+    Responde "como cada cartão se distribui por categoria". Útil para
+    decidir qual cartão usar para qual tipo de gasto, ou perceber
+    desbalanceamentos (ex.: um cartão concentrando Mercado).
+    """
+    if df_transacoes.empty:
+        return pd.DataFrame()
+    if "Categoria" not in df_transacoes.columns or "Cartão" not in df_transacoes.columns:
+        return pd.DataFrame()
+    pivot = pd.pivot_table(
+        df_transacoes,
+        index="Categoria",
+        columns="Cartão",
+        values="Valor (R$)",
+        aggfunc="sum",
+        fill_value=0.0,
+    )
+    pivot["Total"] = pivot.sum(axis=1)
+    pivot = pivot.sort_values("Total", ascending=False)
+    pivot.loc["TOTAL"] = pivot.sum(axis=0)
+    return pivot.reset_index()
+
+
+def _construir_resumo_por_cartao(
+    df_info: pd.DataFrame, df_transacoes: pd.DataFrame
+) -> pd.DataFrame:
+    """Uma linha por cartão (Banco + Titular) com agregados úteis.
+
+    Colunas:
+      - Cartão, Banco, Titular
+      - Qtde. Faturas, Qtde. Transações
+      - Primeira / Última Referência (cobertura temporal)
+      - Total Gasto (R$) — soma das transações (inclui estornos)
+      - Média por Fatura (R$), Ticket Médio (R$)
+    """
+    if df_transacoes.empty or "Cartão" not in df_transacoes.columns:
+        return pd.DataFrame()
+
+    df_t = df_transacoes.copy()
+    df_t["_ref_ord"] = df_t["Referência"].apply(_chave_ordenacao_referencia)
+
+    linhas: list[dict] = []
+    for cartao, grupo in df_t.groupby("Cartão", sort=False):
+        if not cartao:
+            continue
+        banco = str(grupo["Banco"].iloc[0]) if "Banco" in grupo.columns else ""
+        titular = str(grupo["Titular"].iloc[0]) if "Titular" in grupo.columns else ""
+        refs = sorted(set(grupo["Referência"]), key=_chave_ordenacao_referencia)
+        total = float(grupo["Valor (R$)"].sum())
+        qtd_tx = len(grupo)
+        qtd_faturas = grupo["Arquivo"].nunique() if "Arquivo" in grupo.columns else len(refs)
+        media_fatura = total / qtd_faturas if qtd_faturas else 0.0
+        ticket = total / qtd_tx if qtd_tx else 0.0
+        linhas.append(
+            {
+                "Cartão": cartao,
+                "Banco": banco,
+                "Titular": titular,
+                "Qtde. Faturas": qtd_faturas,
+                "Qtde. Transações": qtd_tx,
+                "Primeira Referência": refs[0] if refs else "",
+                "Última Referência": refs[-1] if refs else "",
+                "Total Gasto (R$)": total,
+                "Média por Fatura (R$)": media_fatura,
+                "Ticket Médio (R$)": ticket,
+            }
+        )
+
+    if not linhas:
+        return pd.DataFrame()
+
+    df_resumo = pd.DataFrame(linhas).sort_values(
+        "Total Gasto (R$)", ascending=False
+    )
+
+    total_geral = {
+        "Cartão": "TOTAL",
+        "Banco": "",
+        "Titular": "",
+        "Qtde. Faturas": int(df_resumo["Qtde. Faturas"].sum()),
+        "Qtde. Transações": int(df_resumo["Qtde. Transações"].sum()),
+        "Primeira Referência": "",
+        "Última Referência": "",
+        "Total Gasto (R$)": float(df_resumo["Total Gasto (R$)"].sum()),
+        "Média por Fatura (R$)": (
+            float(df_resumo["Total Gasto (R$)"].sum())
+            / int(df_resumo["Qtde. Faturas"].sum())
+            if df_resumo["Qtde. Faturas"].sum()
+            else 0.0
+        ),
+        "Ticket Médio (R$)": (
+            float(df_resumo["Total Gasto (R$)"].sum())
+            / int(df_resumo["Qtde. Transações"].sum())
+            if df_resumo["Qtde. Transações"].sum()
+            else 0.0
+        ),
+    }
+    return pd.concat(
+        [df_resumo, pd.DataFrame([total_geral])], ignore_index=True
+    )
+
+
+def _construir_top_comerciantes(
+    df_transacoes: pd.DataFrame, top_n: int = 30
+) -> pd.DataFrame:
+    """Top descrições por valor acumulado (apenas gastos, ignora estornos).
+
+    Útil para identificar onde o dinheiro está indo de fato, independente
+    de como foi categorizado. Mostra também ticket médio e cartão(s) onde
+    apareceu, ajudando a perceber duplicidade entre cartões.
+    """
+    if df_transacoes.empty or "Descrição" not in df_transacoes.columns:
+        return pd.DataFrame()
+
+    gastos = df_transacoes[df_transacoes["Valor (R$)"] > 0].copy()
+    if gastos.empty:
+        return pd.DataFrame()
+
+    agg = (
+        gastos.groupby("Descrição")
+        .agg(
+            **{
+                "Qtde.": ("Valor (R$)", "count"),
+                "Total (R$)": ("Valor (R$)", "sum"),
+                "Ticket Médio (R$)": ("Valor (R$)", "mean"),
+                "Categoria": ("Categoria", lambda s: s.mode().iat[0] if not s.mode().empty else ""),
+                "Cartão(ões)": ("Cartão", lambda s: ", ".join(sorted({str(v) for v in s if str(v).strip()}))),
+            }
+        )
+        .reset_index()
+        .sort_values("Total (R$)", ascending=False)
+        .head(top_n)
+        .reset_index(drop=True)
+    )
+    return agg[
+        [
+            "Descrição",
+            "Categoria",
+            "Cartão(ões)",
+            "Qtde.",
+            "Total (R$)",
+            "Ticket Médio (R$)",
+        ]
+    ]
+
+
+def _construir_recorrentes(
+    df_transacoes: pd.DataFrame, meses_min: int = 3
+) -> pd.DataFrame:
+    """Descrições que aparecem em pelo menos `meses_min` meses distintos.
+
+    Excelente para mapear gastos fixos (assinaturas, mensalidades) que
+    pesam todo mês mesmo sendo individualmente pequenos. Mostra média
+    mensal real (dividida pelo nº de meses em que apareceu).
+    """
+    if df_transacoes.empty or "Descrição" not in df_transacoes.columns:
+        return pd.DataFrame()
+    if "Referência" not in df_transacoes.columns:
+        return pd.DataFrame()
+
+    gastos = df_transacoes[df_transacoes["Valor (R$)"] > 0].copy()
+    if gastos.empty:
+        return pd.DataFrame()
+
+    agg = (
+        gastos.groupby("Descrição")
+        .agg(
+            **{
+                "Meses": ("Referência", "nunique"),
+                "Qtde. Transações": ("Valor (R$)", "count"),
+                "Total (R$)": ("Valor (R$)", "sum"),
+                "Média Mensal (R$)": ("Valor (R$)", "sum"),
+                "Categoria": ("Categoria", lambda s: s.mode().iat[0] if not s.mode().empty else ""),
+                "Cartão(ões)": ("Cartão", lambda s: ", ".join(sorted({str(v) for v in s if str(v).strip()}))),
+            }
+        )
+        .reset_index()
+    )
+    agg = agg[agg["Meses"] >= meses_min].copy()
+    if agg.empty:
+        return pd.DataFrame()
+    agg["Média Mensal (R$)"] = agg["Total (R$)"] / agg["Meses"]
+    agg = agg.sort_values(
+        ["Total (R$)", "Meses"], ascending=[False, False]
+    ).reset_index(drop=True)
+    return agg[
+        [
+            "Descrição",
+            "Categoria",
+            "Cartão(ões)",
+            "Meses",
+            "Qtde. Transações",
+            "Total (R$)",
+            "Média Mensal (R$)",
+        ]
+    ]
+
+
 def salvar_excel_acumulativo(
     df_info: pd.DataFrame, df_transacoes: pd.DataFrame, destino: Path
 ) -> None:
     df_transacoes = _ordenar_transacoes(df_transacoes)
     df_info = df_info.reindex(columns=COLUNAS_INFO)
+
     df_resumo = _construir_resumo_geral(df_transacoes)
     df_mensal = _construir_resumo_mensal(df_transacoes)
+    df_cartao_mes = _construir_cartao_x_mes(df_transacoes)
+    df_cartao_cat = _construir_cartao_x_categoria(df_transacoes)
+    df_resumo_cartao = _construir_resumo_por_cartao(df_info, df_transacoes)
+    df_top = _construir_top_comerciantes(df_transacoes)
+    df_recorrentes = _construir_recorrentes(df_transacoes)
 
     destino.parent.mkdir(parents=True, exist_ok=True)
     with pd.ExcelWriter(destino, engine="openpyxl") as writer:
@@ -231,12 +516,39 @@ def salvar_excel_acumulativo(
         df_resumo.to_excel(writer, sheet_name="Resumo por Categoria", index=False)
         if not df_mensal.empty:
             df_mensal.to_excel(writer, sheet_name="Resumo Mensal", index=False)
+        if not df_resumo_cartao.empty:
+            df_resumo_cartao.to_excel(
+                writer, sheet_name="Resumo por Cartão", index=False
+            )
+        if not df_cartao_mes.empty:
+            df_cartao_mes.to_excel(writer, sheet_name="Cartão x Mês", index=False)
+        if not df_cartao_cat.empty:
+            df_cartao_cat.to_excel(
+                writer, sheet_name="Cartão x Categoria", index=False
+            )
+        if not df_top.empty:
+            df_top.to_excel(writer, sheet_name="Top Comerciantes", index=False)
+        if not df_recorrentes.empty:
+            df_recorrentes.to_excel(writer, sheet_name="Recorrentes", index=False)
 
         _formatar_planilha(writer, "Informações", df_info)
         _formatar_planilha(writer, "Transações", df_transacoes)
         _formatar_planilha(writer, "Resumo por Categoria", df_resumo)
         if not df_mensal.empty:
             _formatar_planilha(writer, "Resumo Mensal", df_mensal)
+        if not df_resumo_cartao.empty:
+            _formatar_planilha(writer, "Resumo por Cartão", df_resumo_cartao)
+        if not df_cartao_mes.empty:
+            _formatar_planilha(writer, "Cartão x Mês", df_cartao_mes)
+        if not df_cartao_cat.empty:
+            _formatar_planilha(writer, "Cartão x Categoria", df_cartao_cat)
+        if not df_top.empty:
+            _formatar_planilha(writer, "Top Comerciantes", df_top)
+        if not df_recorrentes.empty:
+            _formatar_planilha(writer, "Recorrentes", df_recorrentes)
+
+
+ABAS_VALOR_PIVOT = {"Resumo Mensal", "Cartão x Mês", "Cartão x Categoria"}
 
 
 def _formatar_planilha(writer, nome_aba: str, df: pd.DataFrame) -> None:
@@ -250,13 +562,17 @@ def _formatar_planilha(writer, nome_aba: str, df: pd.DataFrame) -> None:
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    if nome_aba == "Resumo Mensal":
+    if nome_aba in ABAS_VALOR_PIVOT:
         colunas_valor_idx = range(2, len(df.columns) + 1)
     else:
         colunas_valor_idx = [
             df.columns.get_loc(c) + 1
             for c in df.columns
-            if "Valor" in c or c == "Total"
+            if "Valor" in c
+            or "Total" in c
+            or "Médio" in c
+            or "Média" in c
+            or c == "Ticket"
         ]
     for col_idx in colunas_valor_idx:
         for row in range(2, len(df) + 2):
@@ -268,6 +584,10 @@ def _formatar_planilha(writer, nome_aba: str, df: pd.DataFrame) -> None:
         valores = [str(v) for v in df[coluna].astype(str).tolist()] + [str(coluna)]
         largura = min(max(len(v) for v in valores) + 2, 60)
         aba.column_dimensions[get_column_letter(col_idx)].width = largura
+
+    if nome_aba in ABAS_COM_FILTRO and len(df) > 0 and len(df.columns) > 0:
+        ultima_col = get_column_letter(len(df.columns))
+        aba.auto_filter.ref = f"A1:{ultima_col}{len(df) + 1}"
 
     aba.freeze_panes = "A2"
 
@@ -293,8 +613,15 @@ def _descobrir_pdfs(alvo: Path | None) -> list[Path]:
 
 
 def processar(pdfs: Iterable[Path], destino: Path) -> None:
-    df_info_existente, df_transacoes_existente = _carregar_excel_existente(destino)
+    df_info_existente, df_transacoes_existente, precisou_migrar = (
+        _carregar_excel_existente(destino)
+    )
     arquivos_no_excel = set(df_info_existente["Arquivo"].astype(str).tolist())
+    if precisou_migrar:
+        print(
+            "Excel existente em formato antigo (sem coluna 'Cartão'). "
+            "Será regravado com as novas abas analíticas."
+        )
 
     novos_info: list[dict] = []
     novas_transacoes: list[dict] = []
@@ -335,6 +662,17 @@ def processar(pdfs: Iterable[Path], destino: Path) -> None:
         novas_transacoes.extend(linhas)
 
     if not novos_info:
+        if precisou_migrar and not df_info_existente.empty:
+            salvar_excel_acumulativo(
+                df_info_existente, df_transacoes_existente, destino
+            )
+            print(
+                f"\nExcel migrado para o novo formato: {destino}\n"
+                f"  Total no arquivo: {len(df_info_existente)} faturas, "
+                f"{len(df_transacoes_existente)} transações."
+            )
+            _imprimir_top_outros_gastos(df_transacoes_existente)
+            return
         print("\nNenhuma fatura nova para adicionar ao Excel.")
         if ignorados:
             print(f"  Ignoradas (já no Excel): {len(ignorados)}")
