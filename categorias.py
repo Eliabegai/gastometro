@@ -138,7 +138,6 @@ CATEGORIAS = {
         "odonto*",
         "psicolog*",
         "fisio*",
-        "mapfre seguros",
         "unimed*",
         "amil",
         "bradesco saude",
@@ -205,6 +204,9 @@ CATEGORIAS = {
         "auto eletrica*",
         "autoelétrica*",
         "auto elétrica*",
+        "mecanica*",
+        "mecânica*",
+        "oficina*",
     ],
     "Transporte": [
         "uber*",
@@ -215,9 +217,9 @@ CATEGORIAS = {
         "estapar*",
         "estacionamento*",
         "epar estacionament*",
-        "mecanica*",
-        "mecânica*",
-        "oficina*",
+        "parking*",
+        "sem parar*",
+        "sem*parar*",
         "localiza*",
     ],
     "Casa e Construção": [
@@ -243,11 +245,14 @@ CATEGORIAS = {
         "livraria*",
         "descomplica*",
     ],
+    "Seguro": [
+        "seguro*",
+        "mapfre*",
+    ],
     "Serviços / Assinaturas": [
         "anuidade*",
         "tarifa*",
         "mensalidade*",
-        "seguro*",
     ],
 }
 
