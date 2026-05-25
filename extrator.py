@@ -14,6 +14,12 @@ Uso:
     python extrator.py                       # processa todos os PDFs de `entrada/`
     python extrator.py Fatura.pdf            # processa um PDF específico
     python extrator.py pasta/                # processa todos os PDFs de outra pasta
+    python extrator.py aprender              # salva categorias editadas no Excel
+                                             # como overrides em `categorias_usuario.json`
+    python extrator.py recategorizar         # re-aplica `categorizar()` em todas as
+                                             # transações do Excel (sem reler PDFs),
+                                             # reconstrói as abas analíticas e
+                                             # preserva filtros/tabelas existentes
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from openpyxl.utils import get_column_letter
 
 from categorias import (
     CATEGORIAS_USUARIO_ARQUIVO,
+    categorizar,
     categorizar_pelo_dicionario,
     salvar_categorias_usuario,
 )
@@ -739,6 +746,60 @@ def _imprimir_top_outros_gastos(df_transacoes: pd.DataFrame, top_n: int = 10) ->
     )
 
 
+def recategorizar_excel(caminho: Path) -> None:
+    """Re-aplica `categorizar()` em todas as linhas da aba `Transações` do
+    Excel acumulativo (sem reler PDFs) e reconstrói as abas analíticas.
+
+    Útil quando você editou `categorias.py` ou `categorias_usuario.json`
+    e quer propagar as novas regras para o Excel inteiro, sem precisar
+    apagar o arquivo e reprocessar todas as faturas. Preserva linhas,
+    ordem e cabeçalhos da aba `Transações` — apenas a coluna `Categoria`
+    é reescrita.
+
+    ATENÇÃO: edições manuais na coluna `Categoria` do Excel que ainda
+    não foram capturadas via `python extrator.py aprender` são
+    sobrescritas pelo resultado do dicionário+JSON. Rode `aprender`
+    antes se quiser preservá-las.
+    """
+    if not caminho.exists():
+        print(f"Excel não encontrado: {caminho}")
+        sys.exit(1)
+
+    df_info, df_transacoes, _ = _carregar_excel_existente(caminho)
+    if df_transacoes.empty or "Descrição" not in df_transacoes.columns:
+        print(f"Aba 'Transações' vazia ou sem as colunas esperadas em {caminho}.")
+        sys.exit(1)
+
+    df_transacoes = df_transacoes.copy()
+    categoria_antiga = df_transacoes["Categoria"].fillna("").astype(str)
+    descricoes = df_transacoes["Descrição"].fillna("").astype(str)
+    categoria_nova = descricoes.map(categorizar)
+
+    mudou = categoria_antiga != categoria_nova
+    n_mudancas = int(mudou.sum())
+    df_transacoes["Categoria"] = categoria_nova
+
+    salvar_excel_acumulativo(df_info, df_transacoes, caminho)
+
+    print(
+        f"Recategorização concluída: {n_mudancas} de {len(df_transacoes)} "
+        f"transações tiveram a categoria alterada.\nArquivo: {caminho}"
+    )
+    if n_mudancas:
+        print("\nResumo das mudanças (antiga → nova : qtde):")
+        mudancas = pd.DataFrame(
+            {"antiga": categoria_antiga[mudou], "nova": categoria_nova[mudou]}
+        )
+        agg = (
+            mudancas.groupby(["antiga", "nova"]).size().reset_index(name="n")
+            .sort_values("n", ascending=False)
+        )
+        for _, row in agg.iterrows():
+            print(f"  {row['antiga']:25} → {row['nova']:25} : {int(row['n'])}")
+
+    _imprimir_top_outros_gastos(df_transacoes)
+
+
 def aprender_do_excel(caminho: Path) -> None:
     """Lê o Excel acumulativo e registra em `categorias_usuario.json` cada
     descrição cuja categoria salva difere do que o dicionário fixo
@@ -776,13 +837,17 @@ def aprender_do_excel(caminho: Path) -> None:
 
 def main() -> None:
     argv = sys.argv[1:]
-    if argv and argv[0] == "aprender":
+    if argv and argv[0] in {"aprender", "recategorizar"}:
+        comando = argv[0]
         caminho = (
             Path(argv[1]).expanduser().resolve()
             if len(argv) > 1
             else PASTA_SAIDA / ARQUIVO_SAIDA
         )
-        aprender_do_excel(caminho)
+        if comando == "aprender":
+            aprender_do_excel(caminho)
+        else:
+            recategorizar_excel(caminho)
         return
 
     alvo = Path(argv[0]).expanduser().resolve() if argv else None

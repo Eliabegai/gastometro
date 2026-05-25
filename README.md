@@ -84,8 +84,17 @@ Em qualquer modo, a saída sempre vai para `saida/gastometro.xlsx`.
 
 ### Re-processar uma fatura
 
-Se você atualizou as regras de categorização e quer reaplicá-las a uma
-fatura já no Excel:
+Se você atualizou as regras de categorização e quer reaplicá-las **só
+nas categorias** sem reler PDFs (mantém filtros/tabelas do Excel):
+
+```bash
+python extrator.py recategorizar
+```
+
+Detalhes na seção "[Recategorizar o Excel inteiro](#recategorizar-o-excel-inteiro-recategorizar)" mais abaixo.
+
+Para forçar a leitura do PDF de novo (ex.: alguma transação foi
+extraída errada e o parser mudou):
 
 1. Abra `saida/gastometro.xlsx`.
 2. Apague a linha dessa fatura na aba **Informações** e todas as
@@ -246,6 +255,46 @@ extras.
 
 > Cuidado: o JSON contém descrições brutas (que podem ter dados
 > sensíveis) e por isso está em `.gitignore`.
+
+### Recategorizar o Excel inteiro (`recategorizar`)
+
+A coluna `Categoria` é **gravada como texto literal** no Excel no
+momento em que cada fatura é processada — não é uma fórmula. Por isso,
+quando você edita `categorias.py` ou `categorias_usuario.json` e roda
+`python extrator.py`, as **linhas antigas continuam com as categorias
+de quando foram inseridas** (apenas faturas novas usam as regras
+atualizadas).
+
+Para propagar as regras atuais para todo o Excel sem precisar apagar o
+arquivo e reprocessar PDFs:
+
+```bash
+python extrator.py recategorizar                       # usa saida/gastometro.xlsx
+python extrator.py recategorizar caminho/arquivo.xlsx  # arquivo específico
+```
+
+O comando:
+
+- Lê `saida/gastometro.xlsx` (ou o caminho informado).
+- Re-aplica `categorizar()` em toda a aba `Transações` (respeita
+  `categorias_usuario.json`).
+- Reconstrói **todas** as abas analíticas (Resumo por Categoria,
+  Resumo Mensal, Cartão × Mês, Cartão × Categoria, Top Comerciantes,
+  Recorrentes).
+- Preserva linhas, ordem, formatação e cabeçalhos — seus filtros e
+  segmentações de tabela continuam apontando para os mesmos nomes de
+  coluna.
+- Imprime um resumo: quantas categorias mudaram e o agrupado
+  `antiga → nova : quantidade`.
+
+> **Atenção**: edições manuais que você fez na coluna `Categoria` do
+> Excel e que **ainda não foram capturadas** via `python extrator.py
+> aprender` serão sobrescritas. Fluxo seguro:
+>
+> ```bash
+> python extrator.py aprender        # salva edicoes do Excel no JSON
+> python extrator.py recategorizar   # propaga JSON + dicionario p/ tudo
+> ```
 
 ## Estrutura do projeto
 

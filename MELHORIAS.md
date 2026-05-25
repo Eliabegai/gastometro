@@ -96,6 +96,9 @@
 - [x] **2.4 — Visibilidade do "Outros Gastos"** — P2 / S
   - Concluído em 22/05/2026 (ver "Concluídas").
 
+- [x] **2.5 — Recategorizar Excel sem reler PDFs** — P1 / S
+  - Concluído em 25/05/2026 (ver "Concluídas").
+
 ## 3. Testes automatizados
 
 - [ ] **3.1 — Setup do pytest** — P1 / XS
@@ -221,6 +224,49 @@
 ---
 
 ## Concluídas
+
+### 25/05/2026
+
+- **2.5 — Recategorizar Excel sem reler PDFs**
+  - Novo subcomando `python extrator.py recategorizar [excel]` que lê
+    a aba `Transações` do Excel, re-aplica `categorizar()` (dicionário
+    + `categorias_usuario.json`) em cada linha e reescreve o arquivo,
+    reconstruindo **todas** as abas analíticas (Resumo por Categoria,
+    Resumo Mensal, Cartão × Mês, Cartão × Categoria, Top Comerciantes,
+    Recorrentes). Preserva linhas, ordem, formatação e cabeçalhos —
+    filtros e segmentações continuam apontando para os mesmos
+    cabeçalhos.
+  - Antes, qualquer mudança em `categorias.py`/JSON só afetava
+    **faturas novas**; linhas antigas mantinham a categoria literal
+    gravada na execução em que a fatura foi adicionada (a coluna é
+    texto, não fórmula). Única alternativa era apagar
+    `saida/gastometro.xlsx` e reprocessar todos os PDFs.
+  - Implementação em `extrator.py::recategorizar_excel`: reusa
+    `_carregar_excel_existente`, mapeia descrições para categorias
+    novas, monta DataFrame de diff e chama `salvar_excel_acumulativo`
+    sem retocar a aba `Informações`. Subcomando ligado em `main()`
+    junto com `aprender` (`argv[0] in {"aprender", "recategorizar"}`).
+  - **Cuidado documentado**: edições manuais na coluna `Categoria` do
+    Excel que ainda não foram capturadas via `aprender` são
+    sobrescritas. Fluxo seguro:
+
+    ```bash
+    python extrator.py aprender       # salva edicoes do Excel no JSON
+    python extrator.py recategorizar  # propaga JSON + dicionario p/ tudo
+    ```
+
+  - **Validação** sobre o Excel real (943 transações):
+    - Idempotência: 2ª execução = 0 mudanças.
+    - Test de regressão: corrompi 5 categorias propositadamente,
+      `recategorizar` corrigiu as 5 + outras 11 que estavam
+      desatualizadas (descobri de quebra que o `tecnopan` tinha sido
+      removido por engano de Casa e Construção em edição manual
+      anterior — restaurado como `tecnopan*`).
+    - Erro limpo quando o arquivo não existe (`exit code 1`).
+  - Documentação atualizada em `README.md` (nova seção
+    "Recategorizar o Excel inteiro" + atalho na seção
+    "Re-processar uma fatura") e `HANDOFF.md` (seção 5 com os
+    subcomandos novos e o fluxo recomendado).
 
 ### 23/05/2026
 

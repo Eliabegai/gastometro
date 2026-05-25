@@ -225,7 +225,7 @@ CATEGORIAS = {
     "Casa e Construção": [
         "casa dos tubos",
         "casa das tintas",
-        "tecnopan",
+        "tecnopan*",
         "leroy*",
         "telhanorte",
         "lojao da marechal",

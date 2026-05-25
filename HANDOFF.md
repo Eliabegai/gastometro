@@ -143,7 +143,26 @@ source .venv/bin/activate
 python extrator.py                          # todos os PDFs da pasta
 python extrator.py Fatura_05_2026.pdf       # um PDF específico
 python extrator.py /caminho/para/pasta/     # todos os PDFs da pasta
+python extrator.py aprender                 # transforma edições manuais da coluna
+                                            # Categoria do Excel em overrides no JSON
+python extrator.py recategorizar            # re-aplica categorias atuais em TODO o
+                                            # Excel (sem reler PDFs) e reconstrói as
+                                            # abas analíticas — preserva filtros
 ```
+
+**Fluxo seguro quando você editou `categorias.py` ou
+`categorias_usuario.json` e quer propagar para o Excel inteiro:**
+
+```bash
+python extrator.py aprender         # captura edições manuais do Excel no JSON
+python extrator.py recategorizar    # propaga dicionário + JSON para todas as linhas
+```
+
+Sem o `recategorizar`, as linhas antigas no Excel mantêm a categoria
+gravada na execução em que a fatura foi adicionada — apenas faturas
+novas usam o dicionário atual. Apagar o `saida/gastometro.xlsx` e
+rodar `python extrator.py` também recategoriza tudo, mas reprocessa
+todos os PDFs (mais lento).
 
 Para depurar o que o pdfplumber está extraindo:
 
