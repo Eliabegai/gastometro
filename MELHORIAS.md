@@ -185,7 +185,8 @@
 - [x] **6.1 — `pyproject.toml` + `ruff` + `mypy`** — P2 / S
   - Concluído em 25/05/2026 (ver "Concluídas").
 
-- [ ] **6.2 — GitHub Actions: `pytest` + `ruff` em cada push** — P2 / S
+- [x] **6.2 — GitHub Actions: `pytest` + `ruff` em cada push** — P2 / S
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [ ] **6.3 — `pre-commit` bloqueando PDFs/XLSX por engano** — P3 / S
 
@@ -224,6 +225,28 @@
 ---
 
 ## Concluídas
+
+### 25/05/2026 (CI — 6.2)
+
+- **6.2 — GitHub Actions: pytest + ruff + mypy em push/PR**
+  - `.github/workflows/ci.yml` com dois jobs em paralelo:
+    - **`lint-and-types`**: roda `ruff check .` e `mypy .`
+      em Python 3.12 (uma versão basta para o lint).
+    - **`test`** (matrix 3.10 / 3.11 / 3.12, `fail-fast: false`):
+      roda `pytest` em cada versão suportada do `pyproject.toml`.
+  - Triggers: `push` em `main` e `pull_request` para `main`.
+  - `concurrency` cancela execuções antigas do mesmo PR/branch
+    automaticamente (economiza minutos quando se faz push várias
+    vezes seguidas).
+  - Instalação via `pip install -e ".[dev]"` (usa as deps `dev`
+    declaradas no `pyproject.toml`).
+  - Cache do `pip` configurado com `setup-python@v5` apontando
+    para `pyproject.toml` e `requirements-dev.txt` — recompila
+    deps apenas quando elas mudam.
+  - **Validado localmente** com o mesmo comando que o CI vai
+    rodar: `pip install -e ".[dev]"` instala o pacote
+    `gastometro-0.1.0` e expõe o entry point `gastometro`;
+    `ruff` / `mypy` / `pytest` todos verdes.
 
 ### 25/05/2026 (Tooling — 6.1)
 

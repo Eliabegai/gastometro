@@ -340,6 +340,26 @@ recebem formato percentual em vez de R$.
 - Excel passa de 9 para **12 abas** (3 novas) + 3 gráficos
   embutidos (`PieChart`, `BarChart`, `LineChart`).
 
+## 6.6. O que foi feito em 25/05/2026 — Tooling + CI (6.1 + 6.2)
+
+- **6.1**: `pyproject.toml` substitui o setup ad-hoc com
+  metadados, deps, `[project.optional-dependencies].dev`
+  (`pytest`/`ruff`/`mypy`), entry point `gastometro =
+  extrator:main` e config completa de `ruff`, `mypy` e `pytest`.
+  Ruff (12 → 0): imports, `Iterable` de `collections.abc`,
+  `zip(strict=False)`, variável `l` → `bucket`. Mypy (4 → 0):
+  `parse_valor_brl(texto: str | None)`, `bool(...)` em
+  `tem_data`, rename de `linha` para `texto_linha` em
+  `_extrair_movimentacoes_conta`.
+- **6.2**: `.github/workflows/ci.yml` com 2 jobs paralelos.
+  `lint-and-types` (ruff + mypy em Py 3.12) e `test` (pytest em
+  matrix 3.10/3.11/3.12, `fail-fast: false`). `concurrency`
+  cancela jobs antigos do mesmo branch/PR. Cache do pip pela
+  `pyproject.toml` + `requirements-dev.txt`. Instalação via
+  `pip install -e ".[dev]"`.
+- Validado localmente com a mesma sequência do CI: `ruff` All
+  checks passed, `mypy` Success no issues, `pytest` 109 passed.
+
 ## 7. Gotchas / armadilhas conhecidas
 
 - **Cidade pode vir truncada**: o PDF da Ailos corta cidades longas

@@ -372,6 +372,17 @@ Toda a configuração (ruff, mypy, pytest) vive em `pyproject.toml`.
 Targets: Python 3.10+, line-length 100, regras pragmáticas (`E`,
 `F`, `I`, `B`, `UP`, `W`, `SIM`).
 
+### Integração Contínua
+
+Cada `push` em `main` e cada pull request dispara o workflow
+`.github/workflows/ci.yml`, que roda em paralelo:
+
+- **`lint-and-types`** — `ruff check .` + `mypy .` em Python 3.12.
+- **`test`** — `pytest` em matrix Python 3.10 / 3.11 / 3.12.
+
+Builds antigos do mesmo PR são cancelados automaticamente
+(`concurrency.cancel-in-progress: true`).
+
 Os testes cobrem:
 
 - `parse_valor_brl` — formatos BR e americano, negativos, trailing
