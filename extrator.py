@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
+from openpyxl.chart import BarChart, PieChart, Reference
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -77,7 +78,13 @@ MES_POR_NOME = {nome: num for num, nome in MES_POR_NUMERO.items()}
 
 TOLERANCIA_TOTAL = 0.01
 
-ABAS_COM_FILTRO = {"Informações", "Transações", "Top Comerciantes", "Recorrentes"}
+ABAS_COM_FILTRO = {
+    "Informações",
+    "Transações",
+    "Top Comerciantes",
+    "Recorrentes",
+    "Maiores Gastos",
+}
 
 
 def _identificador_cartao(banco: str, titular: str) -> str:
@@ -259,6 +266,12 @@ def _chave_ordenacao_referencia(referencia: str) -> tuple[int, int]:
 
 
 def _construir_resumo_mensal(df_transacoes: pd.DataFrame) -> pd.DataFrame:
+    """Pivot Referência × Categoria, com Total mensal e variação % vs mês anterior.
+
+    A coluna `Variação %` está em pontos percentuais (12.3 = +12,3%) e fica
+    em branco no 1º mês e na linha `TOTAL`. Usada também como base do
+    `BarChart` (coluna `Total`) inserido na aba.
+    """
     if df_transacoes.empty or "Referência" not in df_transacoes.columns:
         return pd.DataFrame()
     pivot = pd.pivot_table(
@@ -272,7 +285,23 @@ def _construir_resumo_mensal(df_transacoes: pd.DataFrame) -> pd.DataFrame:
     referencias_ordenadas = sorted(pivot.index, key=_chave_ordenacao_referencia)
     pivot = pivot.loc[referencias_ordenadas]
     pivot["Total"] = pivot.sum(axis=1)
-    pivot.loc["TOTAL"] = pivot.sum(axis=0)
+
+    totais = pivot["Total"].tolist()
+    variacoes: list[float | None] = []
+    for i, atual in enumerate(totais):
+        if i == 0:
+            variacoes.append(None)
+            continue
+        anterior = totais[i - 1]
+        if anterior == 0:
+            variacoes.append(None)
+        else:
+            variacoes.append((atual - anterior) / anterior * 100.0)
+    pivot["Variação %"] = variacoes
+
+    soma_linhas = pivot.drop(columns=["Variação %"]).sum(axis=0)
+    pivot.loc["TOTAL"] = soma_linhas
+    pivot.at["TOTAL", "Variação %"] = None
     return pivot.reset_index()
 
 
@@ -406,6 +435,40 @@ def _construir_resumo_por_cartao(
     )
 
 
+def _construir_top_transacoes(
+    df_transacoes: pd.DataFrame, top_n: int = 20
+) -> pd.DataFrame:
+    """Top N transações individuais por valor (apenas gastos, ignora estornos).
+
+    Diferente de `Top Comerciantes` (que agrupa por descrição), aqui cada
+    linha é uma compra isolada — útil para revisar os maiores impactos
+    pontuais no período (parcela cara, hotel, eletrodoméstico, etc.).
+    """
+    if df_transacoes.empty:
+        return pd.DataFrame()
+
+    gastos = df_transacoes[df_transacoes["Valor (R$)"] > 0].copy()
+    if gastos.empty:
+        return pd.DataFrame()
+
+    colunas = [
+        "Data",
+        "Referência",
+        "Descrição",
+        "Categoria",
+        "Cartão",
+        "Parcela",
+        "Cidade",
+        "Valor (R$)",
+    ]
+    colunas = [c for c in colunas if c in gastos.columns]
+    return (
+        gastos.sort_values("Valor (R$)", ascending=False)
+        .head(top_n)[colunas]
+        .reset_index(drop=True)
+    )
+
+
 def _construir_top_comerciantes(
     df_transacoes: pd.DataFrame, top_n: int = 30
 ) -> pd.DataFrame:
@@ -513,6 +576,7 @@ def salvar_excel_acumulativo(
     df_cartao_mes = _construir_cartao_x_mes(df_transacoes)
     df_cartao_cat = _construir_cartao_x_categoria(df_transacoes)
     df_resumo_cartao = _construir_resumo_por_cartao(df_info, df_transacoes)
+    df_maiores = _construir_top_transacoes(df_transacoes)
     df_top = _construir_top_comerciantes(df_transacoes)
     df_recorrentes = _construir_recorrentes(df_transacoes)
 
@@ -533,6 +597,8 @@ def salvar_excel_acumulativo(
             df_cartao_cat.to_excel(
                 writer, sheet_name="Cartão x Categoria", index=False
             )
+        if not df_maiores.empty:
+            df_maiores.to_excel(writer, sheet_name="Maiores Gastos", index=False)
         if not df_top.empty:
             df_top.to_excel(writer, sheet_name="Top Comerciantes", index=False)
         if not df_recorrentes.empty:
@@ -549,10 +615,16 @@ def salvar_excel_acumulativo(
             _formatar_planilha(writer, "Cartão x Mês", df_cartao_mes)
         if not df_cartao_cat.empty:
             _formatar_planilha(writer, "Cartão x Categoria", df_cartao_cat)
+        if not df_maiores.empty:
+            _formatar_planilha(writer, "Maiores Gastos", df_maiores)
         if not df_top.empty:
             _formatar_planilha(writer, "Top Comerciantes", df_top)
         if not df_recorrentes.empty:
             _formatar_planilha(writer, "Recorrentes", df_recorrentes)
+
+        _adicionar_grafico_categorias(writer, df_resumo)
+        if not df_mensal.empty:
+            _adicionar_grafico_mensal(writer, df_mensal)
 
 
 ABAS_VALOR_PIVOT = {"Resumo Mensal", "Cartão x Mês", "Cartão x Categoria"}
@@ -569,23 +641,36 @@ def _formatar_planilha(writer, nome_aba: str, df: pd.DataFrame) -> None:
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
+    colunas_percent_idx = [
+        df.columns.get_loc(c) + 1 for c in df.columns if "%" in str(c)
+    ]
     if nome_aba in ABAS_VALOR_PIVOT:
-        colunas_valor_idx = range(2, len(df.columns) + 1)
+        colunas_valor_idx = [
+            i for i in range(2, len(df.columns) + 1) if i not in colunas_percent_idx
+        ]
     else:
         colunas_valor_idx = [
             df.columns.get_loc(c) + 1
             for c in df.columns
-            if "Valor" in c
-            or "Total" in c
-            or "Médio" in c
-            or "Média" in c
-            or c == "Ticket"
+            if (
+                "Valor" in c
+                or "Total" in c
+                or "Médio" in c
+                or "Média" in c
+                or c == "Ticket"
+            )
+            and "%" not in str(c)
         ]
     for col_idx in colunas_valor_idx:
         for row in range(2, len(df) + 2):
             celula = aba.cell(row=row, column=col_idx)
             if isinstance(celula.value, (int, float)):
                 celula.number_format = "R$ #,##0.00"
+    for col_idx in colunas_percent_idx:
+        for row in range(2, len(df) + 2):
+            celula = aba.cell(row=row, column=col_idx)
+            if isinstance(celula.value, (int, float)):
+                celula.number_format = '+0.0"%";-0.0"%";0.0"%"'
 
     for col_idx, coluna in enumerate(df.columns, start=1):
         valores = [str(v) for v in df[coluna].astype(str).tolist()] + [str(coluna)]
@@ -597,6 +682,64 @@ def _formatar_planilha(writer, nome_aba: str, df: pd.DataFrame) -> None:
         aba.auto_filter.ref = f"A1:{ultima_col}{len(df) + 1}"
 
     aba.freeze_panes = "A2"
+
+
+def _adicionar_grafico_categorias(writer, df_resumo: pd.DataFrame) -> None:
+    """Insere `PieChart` na aba 'Resumo por Categoria' (exclui linha TOTAL GERAL).
+
+    Resumo é uma coluna `Categoria` (texto) + coluna `Valor (R$)`. As
+    categorias começam na linha 2 e a última é `TOTAL GERAL`, então
+    pegamos até `len(df_resumo)` (a antepenúltima linha de dados +
+    cabeçalho), e o gráfico fica posicionado em D2.
+    """
+    if df_resumo.empty or len(df_resumo) < 3:
+        return
+    aba = writer.sheets.get("Resumo por Categoria")
+    if aba is None:
+        return
+    ultima_linha_dados = len(df_resumo)
+    chart = PieChart()
+    chart.title = "Distribuição por Categoria"
+    chart.height = 12
+    chart.width = 18
+    rotulos = Reference(aba, min_col=1, min_row=2, max_row=ultima_linha_dados)
+    dados = Reference(
+        aba, min_col=2, min_row=1, max_row=ultima_linha_dados
+    )
+    chart.add_data(dados, titles_from_data=True)
+    chart.set_categories(rotulos)
+    aba.add_chart(chart, "D2")
+
+
+def _adicionar_grafico_mensal(writer, df_mensal: pd.DataFrame) -> None:
+    """Insere `BarChart` na aba 'Resumo Mensal' usando a coluna `Total`.
+
+    Ignora a linha `TOTAL` (última) no eixo X. Posicionado embaixo dos
+    dados, com 2 linhas de respiro.
+    """
+    if df_mensal.empty or "Total" not in df_mensal.columns:
+        return
+    aba = writer.sheets.get("Resumo Mensal")
+    if aba is None:
+        return
+    ultima_linha_dados = len(df_mensal)
+    n_meses = ultima_linha_dados - 1
+    if n_meses < 2:
+        return
+    col_total = df_mensal.columns.get_loc("Total") + 1
+
+    chart = BarChart()
+    chart.type = "col"
+    chart.title = "Total Mensal"
+    chart.y_axis.title = "R$"
+    chart.x_axis.title = "Mês"
+    chart.height = 10
+    chart.width = 22
+    dados = Reference(aba, min_col=col_total, min_row=1, max_row=1 + n_meses)
+    categorias = Reference(aba, min_col=1, min_row=2, max_row=1 + n_meses)
+    chart.add_data(dados, titles_from_data=True)
+    chart.set_categories(categorias)
+    aba.add_chart(chart, f"A{ultima_linha_dados + 3}")
 
 
 def _descobrir_pdfs(alvo: Path | None) -> list[Path]:
@@ -679,6 +822,7 @@ def processar(pdfs: Iterable[Path], destino: Path) -> None:
                 f"{len(df_transacoes_existente)} transações."
             )
             _imprimir_top_outros_gastos(df_transacoes_existente)
+            _imprimir_comparativo_mensal(df_transacoes_existente)
             return
         print("\nNenhuma fatura nova para adicionar ao Excel.")
         if ignorados:
@@ -705,6 +849,89 @@ def processar(pdfs: Iterable[Path], destino: Path) -> None:
         print(f"  Ignoradas (já no Excel): {len(ignorados)}.")
 
     _imprimir_top_outros_gastos(df_transacoes_final)
+    _imprimir_comparativo_mensal(df_transacoes_final)
+
+
+def _formatar_brl(valor: float) -> str:
+    """Formata em moeda BR sem depender de locale: `1.234,56`."""
+    s = f"{abs(valor):,.2f}"
+    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"-R$ {s}" if valor < 0 else f"R$ {s}"
+
+
+def _imprimir_comparativo_mensal(df_transacoes: pd.DataFrame) -> None:
+    """Compara último mês com o anterior: total geral + categorias com
+    maior variação absoluta. Imprime nada se houver menos de 2 meses.
+    """
+    if df_transacoes is None or df_transacoes.empty:
+        return
+    if "Referência" not in df_transacoes.columns:
+        return
+    if "Categoria" not in df_transacoes.columns:
+        return
+
+    refs = [r for r in df_transacoes["Referência"].astype(str).unique() if r]
+    refs.sort(key=_chave_ordenacao_referencia)
+    if len(refs) < 2:
+        return
+
+    ultimo, anterior = refs[-1], refs[-2]
+
+    def soma_por_categoria(ref: str) -> dict[str, float]:
+        sub = df_transacoes[df_transacoes["Referência"] == ref]
+        return (
+            sub.groupby("Categoria")["Valor (R$)"]
+            .sum()
+            .to_dict()
+        )
+
+    cats_ult = soma_por_categoria(ultimo)
+    cats_ant = soma_por_categoria(anterior)
+    total_ult = float(sum(cats_ult.values()))
+    total_ant = float(sum(cats_ant.values()))
+
+    print(f"\nComparativo: {ultimo} vs {anterior}")
+    if total_ant:
+        var_pct = (total_ult - total_ant) / total_ant * 100.0
+        sinal = "+" if var_pct >= 0 else ""
+        diff = total_ult - total_ant
+        sinal_abs = "+" if diff >= 0 else "-"
+        print(
+            f"  TOTAL                 {_formatar_brl(total_ult):>14}  "
+            f"({sinal}{var_pct:.1f}% / {sinal_abs}{_formatar_brl(abs(diff))[3:]}"
+            f" vs {_formatar_brl(total_ant)})"
+        )
+    else:
+        print(
+            f"  TOTAL                 {_formatar_brl(total_ult):>14}  "
+            f"(mês anterior R$ 0,00)"
+        )
+
+    todas = set(cats_ult) | set(cats_ant)
+    diffs: list[tuple[str, float, float, float]] = []
+    for cat in todas:
+        a = float(cats_ult.get(cat, 0.0))
+        b = float(cats_ant.get(cat, 0.0))
+        diffs.append((cat, a, b, a - b))
+    diffs.sort(key=lambda t: abs(t[3]), reverse=True)
+
+    for cat, atual, ant, diff in diffs[:8]:
+        if abs(diff) < 0.01:
+            continue
+        sinal_abs = "+" if diff >= 0 else "-"
+        valor_atual = _formatar_brl(atual)
+        if ant == 0:
+            print(
+                f"  {cat:21}  {valor_atual:>14}  "
+                f"(novo, {sinal_abs}{_formatar_brl(abs(diff))[3:]})"
+            )
+        else:
+            var_pct = diff / ant * 100.0
+            sinal = "+" if var_pct >= 0 else ""
+            print(
+                f"  {cat:21}  {valor_atual:>14}  "
+                f"({sinal}{var_pct:.1f}% / {sinal_abs}{_formatar_brl(abs(diff))[3:]})"
+            )
 
 
 def _imprimir_top_outros_gastos(df_transacoes: pd.DataFrame, top_n: int = 10) -> None:
@@ -798,6 +1025,7 @@ def recategorizar_excel(caminho: Path) -> None:
             print(f"  {row['antiga']:25} → {row['nova']:25} : {int(row['n'])}")
 
     _imprimir_top_outros_gastos(df_transacoes)
+    _imprimir_comparativo_mensal(df_transacoes)
 
 
 def aprender_do_excel(caminho: Path) -> None:

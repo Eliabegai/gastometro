@@ -119,8 +119,12 @@ coluna para fatiar os dados.
   `Valor (R$)` e `Categoria`. Filtre por cartão para analisar um
   cartão específico, por categoria para ver só Mercado, etc.
 - **Resumo por Categoria**: soma agregada por categoria + total geral.
+  Inclui **gráfico de pizza** "Distribuição por Categoria" ao lado dos
+  dados.
 - **Resumo Mensal**: pivot referência (mês/ano) × categoria, com total
-  por mês e linha `TOTAL` no fim.
+  por mês, coluna `Variação %` (variação % do total vs mês anterior)
+  e linha `TOTAL` no fim. Inclui **gráfico de barras** "Total Mensal"
+  abaixo dos dados.
 - **Resumo por Cartão**: uma linha por cartão (`Banco — Titular`) com
   qtde. de faturas, qtde. de transações, primeira/última referência,
   total gasto, média por fatura e ticket médio.
@@ -129,6 +133,11 @@ coluna para fatiar os dados.
 - **Cartão x Categoria**: pivot categoria × cartão. Mostra como cada
   cartão se distribui por categoria (útil para decidir qual usar
   para quê).
+- **Maiores Gastos** (filtro): top 20 transações individuais por
+  valor (apenas gastos, ignora estornos). Diferente de
+  `Top Comerciantes` (agrupado por descrição), aqui cada linha é
+  uma compra isolada — ótimo para revisar parcelas altas, hotéis,
+  eletrodomésticos.
 - **Top Comerciantes** (filtro): top 30 descrições por valor
   acumulado, com categoria, cartão(ões) onde apareceu, qtde. de
   transações, total e ticket médio. Foco em onde o dinheiro
@@ -159,8 +168,23 @@ Excel acumulativo atualizado: /caminho/gastometro/saida/gastometro.xlsx
   Total no arquivo: 2 faturas, 58 transações.
   Faturas adicionadas nesta execução: 2.
 
+Top 10 descrições em 'Outros Gastos' (acumulado no Excel):
+  R$    928.00  ( 4x)  G B Tucurivi Comercio
+  ...
+
+Comparativo: Maio/2026 vs Abril/2026
+  TOTAL                    R$ 5.355,35  (+9.5% / +462,78 vs R$ 4.892,57)
+  Alimentação                 R$ 897,63  (+267.9% / +653,64)
+  Mercado                   R$ 1.184,66  (-33.1% / -586,45)
+  Combustível               R$ 1.233,59  (+46.4% / +390,86)
+  ...
+
 Concluído.
 ```
+
+O comparativo mensal mostra automaticamente a variação % e absoluta
+do último mês vs o anterior, destacando as categorias com maior
+movimento.
 
 ### Solução de problemas
 

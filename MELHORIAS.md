@@ -141,23 +141,21 @@
 - [ ] **5.1 — Consolidação multi-fatura** — P1 / M
   - Excel mestre com aba `Consolidado` (todas as transações de N PDFs) + `Comparativo` (categoria × mês).
 
-- [ ] **5.2 — Gráficos no Excel** — P2 / S
-  - `openpyxl.chart.PieChart` (categorias) e `BarChart` (mensal).
+- [x] **5.2 — Gráficos no Excel** — P2 / S
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [x] **5.11 — Relatórios por cartão + abas analíticas + filtros nativos** — P1 / M
   - Concluído em 23/05/2026 (ver "Concluídas").
 
-- [ ] **5.12 — Aba `Maiores Gastos` (top transações individuais)** — P2 / XS
-  - Top 20 transações por valor (não agrupadas). Útil para revisar
-    compras grandes do período.
+- [x] **5.12 — Aba `Maiores Gastos` (top transações individuais)** — P2 / XS
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [ ] **5.13 — Aba `Estornos` dedicada** — P3 / XS
   - Lista todas as transações com `Valor < 0` (créditos recebidos),
     facilita conferência.
 
-- [ ] **5.14 — Variação % vs mês anterior no Resumo Mensal** — P2 / S
-  - Já mapeado em 5.6, mas agora com a aba pronta dá pra anexar como
-    linha extra (ou aba paralela).
+- [x] **5.14 — Variação % vs mês anterior no Resumo Mensal** — P2 / S
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [ ] **5.15 — Tendência por cartão (gráfico de linha)** — P3 / S
   - Mostra evolução mensal de cada cartão lado a lado. Depende de 5.2.
@@ -171,8 +169,8 @@
 - [ ] **5.5 — Detecção de duplicatas entre faturas** — P2 / S
   - Útil ao consolidar; pega cobrança em duplicidade.
 
-- [ ] **5.6 — Comparativo mensal automático** — P2 / S
-  - "Mercado R$ X (+12% vs mês passado)".
+- [x] **5.6 — Comparativo mensal automático** — P2 / S
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [ ] **5.7 — Exportar JSON/CSV além de Excel** — P3 / XS
 
@@ -226,6 +224,70 @@
 ---
 
 ## Concluídas
+
+### 25/05/2026 (Bloco B — features visíveis no Excel + terminal)
+
+- **5.12 — Aba `Maiores Gastos`**
+  - Nova função `_construir_top_transacoes(df, top_n=20)` em
+    `extrator.py`. Retorna as 20 transações individuais de maior
+    valor (apenas gastos, ignora estornos), com colunas
+    `Data, Referência, Descrição, Categoria, Cartão, Parcela,
+    Cidade, Valor (R$)`. Aba inclui filtros nativos e formatação R$.
+  - Diferente de `Top Comerciantes` (agrupado por descrição): aqui
+    cada linha é uma compra única — útil para revisar parcelas
+    altas, hotéis, eletrodomésticos, etc.
+  - **Validação**: no Excel real (943 transações) a aba traz top:
+    `Truts Mercado R$ 808,85`, `KOMPRAO ATACADISTA R$ 755,21`,
+    `KOMPRAO KOCH R$ 724,61`.
+
+- **5.14 — Coluna `Variação %` no Resumo Mensal**
+  - Adicionada após `Total` no pivot de `_construir_resumo_mensal`.
+    Calculada como `(total_mes - total_mes_anterior) /
+    total_mes_anterior * 100` em pontos percentuais.
+  - Em branco no 1º mês (sem anterior) e na linha `TOTAL` (somar
+    variações é sem sentido). A linha `TOTAL` agora é recalculada
+    a partir de `pivot.drop(columns=["Variação %"]).sum(axis=0)`
+    para não somar a coluna percentual.
+  - Formato custom em `_formatar_planilha`:
+    `'+0.0"%";-0.0"%";0.0"%"'` (mostra sinal para positivos e
+    negativos). Toda coluna cujo header contenha `%` agora pula o
+    formato R$ e usa o formato percentual.
+  - **Validação** no Excel real: Maio/2026 = R$ 5.355,35 (+9.5%
+    vs Abril/2026), Abril = +20.2% vs Março, etc. Bate com o
+    comparativo do terminal.
+
+- **5.2 — Gráficos no Excel**
+  - `PieChart` em `Resumo por Categoria` (título "Distribuição por
+    Categoria", posicionado em D2): rótulos = categorias, dados =
+    coluna `Valor (R$)`, **excluindo** a linha `TOTAL GERAL`.
+  - `BarChart` em `Resumo Mensal` (título "Total Mensal", posicionado
+    embaixo dos dados): eixo X = meses (excluindo linha `TOTAL`),
+    eixo Y = coluna `Total`. Dimensões: 22 × 10 cm.
+  - Implementado com `openpyxl.chart.{PieChart, BarChart, Reference}`.
+    Os gráficos referenciam células diretamente, então acompanham
+    edições futuras (filtro, ordenação) automaticamente.
+  - Helpers protegem contra dados insuficientes (`< 2` meses ou
+    `< 3` categorias).
+  - **Validação**: `wb['Resumo por Categoria']._charts` = 1
+    `PieChart`; `wb['Resumo Mensal']._charts` = 1 `BarChart`.
+
+- **5.6 — Comparativo mensal automático no terminal**
+  - Nova função `_imprimir_comparativo_mensal(df)` chamada após
+    `_imprimir_top_outros_gastos` em todos os fluxos (`processar`,
+    `recategorizar_excel`, migração de Excel antigo).
+  - Compara o último mês com o anterior:
+    - Linha `TOTAL`: variação % e absoluta vs mês anterior.
+    - Top 8 categorias por |Δ|: variação % e absoluta. Quando a
+      categoria não existia no mês anterior, mostra `(novo,
+      +R$ X,YY)`.
+  - Helper `_formatar_brl(valor)` formata em moeda BR sem depender
+    de `locale` (`1.234,56` em vez de `1,234.56`).
+  - **Validação real**: comparativo Maio/2026 vs Abril/2026 →
+    `TOTAL R$ 5.355,35 (+9.5% / +462,78)`, com destaque para
+    `Alimentação +267.9%`, `Mercado -33.1%`, `Combustível +46.4%`.
+
+- **Idempotência**: rodei `recategorizar` 2× sobre o mesmo Excel →
+  0 mudanças na 2ª execução, charts e variação recriados sem drift.
 
 ### 25/05/2026 (Bloco A — fundação de testes)
 

@@ -283,6 +283,43 @@ Suite roda em ~0.2s: **109 passed**. Comando padrão:
 python -m pytest -q
 ```
 
+## 6.4. O que foi feito em 25/05/2026 — Features visíveis (Bloco B)
+
+Quatro melhorias correlatas implementadas num único commit:
+
+- **5.12** — Nova aba `Maiores Gastos` no Excel (top 20 transações
+  individuais por valor, apenas gastos). Diferente de
+  `Top Comerciantes` (agrupado): aqui cada linha é uma compra
+  isolada. Função: `_construir_top_transacoes`.
+- **5.14** — Coluna `Variação %` no `Resumo Mensal` (variação % do
+  total mensal vs mês anterior, em pontos percentuais, formato
+  `+0.0"%";-0.0"%";0.0"%"`). Em branco no 1º mês e na linha `TOTAL`.
+  A linha `TOTAL` deixou de somar a coluna percentual.
+- **5.2** — Gráficos no Excel:
+  - `PieChart` "Distribuição por Categoria" em `Resumo por
+    Categoria` (posicionado em D2, exclui linha `TOTAL GERAL`).
+  - `BarChart` "Total Mensal" em `Resumo Mensal` (posicionado
+    embaixo dos dados, exclui linha `TOTAL`).
+  - Os gráficos referenciam células — acompanham edições.
+- **5.6** — Comparativo mensal no terminal:
+  `_imprimir_comparativo_mensal` chamada após
+  `_imprimir_top_outros_gastos` em todos os fluxos. Mostra TOTAL
+  (com variação % e absoluta) + top 8 categorias por |Δ|, com
+  rótulo `(novo)` quando a categoria não existia no mês anterior.
+  Helper `_formatar_brl` formata em moeda BR sem `locale`.
+
+Ajuste em `_formatar_planilha`: colunas cujo header contém `%`
+recebem formato percentual em vez de R$.
+
+**Validação real** no Excel acumulado (943 transações):
+- Maio/2026 = R$ 5.355,35 (+9.5% vs Abril/2026 R$ 4.892,57).
+- Top transações: Truts Mercado R$ 808,85; KOMPRAO ATACADISTA
+  R$ 755,21; KOMPRAO KOCH R$ 724,61.
+- `wb['Resumo por Categoria']._charts` → 1 `PieChart`;
+  `wb['Resumo Mensal']._charts` → 1 `BarChart`.
+- 2× `python extrator.py recategorizar` → idempotente
+  (0 mudanças na 2ª execução, charts/coluna recriados sem drift).
+
 ## 7. Gotchas / armadilhas conhecidas
 
 - **Cidade pode vir truncada**: o PDF da Ailos corta cidades longas
