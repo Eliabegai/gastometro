@@ -21,7 +21,6 @@ from .base import (
     referencia_pelo_vencimento,
 )
 
-
 NOME_BANCO = "Nubank"
 
 RE_TRANSACAO = re.compile(

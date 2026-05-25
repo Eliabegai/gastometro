@@ -6,7 +6,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
-
 MESES_PT = {
     "JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6,
     "JUL": 7, "AGO": 8, "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12,
@@ -48,7 +47,7 @@ class Fatura:
     transacoes: list[Transacao] = field(default_factory=list)
 
 
-def parse_valor_brl(texto: str) -> float | None:
+def parse_valor_brl(texto: str | None) -> float | None:
     """Converte strings como 'R$ 1.234,56' ou '-R$ 932,54' em float.
 
     Aceita formato BR clássico (`1.234,56`) e formato americano usado em

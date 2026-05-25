@@ -347,21 +347,30 @@ gastometro/
 │   ├── nubank.py          # parser Nubank
 │   └── banco_brasil.py    # parser Banco do Brasil (Ourocard)
 ├── tests/                 # suite pytest (parse_valor_brl, categorias, inferencia)
+├── pyproject.toml         # config de build + ruff + mypy + pytest
 ├── requirements.txt
-├── requirements-dev.txt   # requirements.txt + pytest
+├── requirements-dev.txt   # requirements.txt + pytest + ruff + mypy
 ├── README.md              # este arquivo
 └── MELHORIAS.md           # backlog vivo de melhorias (priorizado)
 ```
 
-## Testes
+## Testes, lint e tipos
 
-A suite usa `pytest` e roda em segundos. Instale as dependências de
-desenvolvimento e rode na raiz:
+O projeto usa `pytest`, `ruff` (lint + imports + upgrades) e `mypy`
+(tipos). Instale as dependências de dev e rode na raiz:
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest -q
+pip install -r requirements-dev.txt   # ou: pip install -e ".[dev]"
+
+python -m pytest                       # 109 testes
+ruff check .                           # lint
+ruff check . --fix                     # lint com auto-fix
+mypy .                                 # tipos
 ```
+
+Toda a configuração (ruff, mypy, pytest) vive em `pyproject.toml`.
+Targets: Python 3.10+, line-length 100, regras pragmáticas (`E`,
+`F`, `I`, `B`, `UP`, `W`, `SIM`).
 
 Os testes cobrem:
 

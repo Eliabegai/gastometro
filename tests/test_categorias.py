@@ -29,7 +29,6 @@ from categorias import (
     salvar_categorias_usuario,
 )
 
-
 # ---------------------------------------------------------------------------
 # Smoke por categoria — pelo menos 2 positivos por categoria
 # ---------------------------------------------------------------------------

@@ -14,9 +14,8 @@ from pathlib import Path
 
 import pdfplumber
 
-from .base import Fatura, FaturaMetadata, Transacao
 from . import ailos, banco_brasil, nubank
-
+from .base import Fatura, FaturaMetadata, Transacao
 
 PARSERS_DISPONIVEIS = (
     ailos,

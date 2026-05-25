@@ -22,7 +22,6 @@ from .base import (
     referencia_pelo_vencimento,
 )
 
-
 NOME_BANCO = "Ailos"
 
 RE_DATA = re.compile(r"^\d{2}$")
@@ -49,7 +48,7 @@ class _Linha:
 
     @property
     def tem_data(self) -> bool:
-        return (
+        return bool(
             len(self.data_tokens) >= 2
             and RE_DATA.match(self.data_tokens[0])
             and self.data_tokens[1].upper() in MESES_PT
@@ -169,26 +168,26 @@ def _classificar_palavras_em_colunas(linhas_palavras, colunas) -> list[_Linha]:
 
     resultado: list[_Linha] = []
     for linha in linhas_palavras:
-        l = _Linha(top=linha[0]["top"])
+        bucket = _Linha(top=linha[0]["top"])
         for palavra in linha:
             x = palavra["x0"]
             texto = palavra["text"]
 
             if RE_PARCELA.match(texto):
-                l.desc_tokens.append(texto)
+                bucket.desc_tokens.append(texto)
                 continue
 
             if x < limite_data_desc:
-                l.data_tokens.append(texto)
+                bucket.data_tokens.append(texto)
             elif x < limite_desc_cidade:
-                l.desc_tokens.append(texto)
+                bucket.desc_tokens.append(texto)
             elif x < limite_cidade_valor:
-                l.cidade_tokens.append(texto)
+                bucket.cidade_tokens.append(texto)
             else:
                 if texto == "R$":
                     continue
-                l.valor_tokens.append(texto)
-        resultado.append(l)
+                bucket.valor_tokens.append(texto)
+        resultado.append(bucket)
     return resultado
 
 
@@ -415,8 +414,8 @@ def _extrair_movimentacoes_conta(
         linhas_texto.append(" ".join(textos).strip())
 
     transacoes: list[Transacao] = []
-    for i, linha in enumerate(linhas_texto):
-        m = _casar_linha_movimentacao(linha)
+    for i, texto_linha in enumerate(linhas_texto):
+        m = _casar_linha_movimentacao(texto_linha)
         if not m:
             continue
         dia, mes_str, resto, valor_str = m

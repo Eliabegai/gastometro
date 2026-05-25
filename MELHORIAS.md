@@ -182,7 +182,8 @@
 
 ## 6. Tooling / DX
 
-- [ ] **6.1 — `pyproject.toml` + `ruff` + `mypy`** — P2 / S
+- [x] **6.1 — `pyproject.toml` + `ruff` + `mypy`** — P2 / S
+  - Concluído em 25/05/2026 (ver "Concluídas").
 
 - [ ] **6.2 — GitHub Actions: `pytest` + `ruff` em cada push** — P2 / S
 
@@ -223,6 +224,44 @@
 ---
 
 ## Concluídas
+
+### 25/05/2026 (Tooling — 6.1)
+
+- **6.1 — `pyproject.toml` + `ruff` + `mypy`**
+  - Criado `pyproject.toml` com:
+    - Metadados (`name`, `version`, `description`, `requires-python
+      = ">=3.10"`, `license = MIT`).
+    - `dependencies` espelhando `requirements.txt`.
+    - `optional-dependencies.dev = [pytest>=8.0, ruff>=0.6,
+      mypy>=1.10]`.
+    - `project.scripts.gastometro = "extrator:main"` (entry point
+      após `pip install -e ".[dev]"`).
+    - `[tool.setuptools]` apontando os módulos top-level
+      (`extrator`, `categorias`) e o pacote `parsers`.
+  - **Ruff**: `target-version = "py310"`, `line-length = 100`,
+    rules `["E", "F", "I", "B", "UP", "W", "SIM"]`, ignores
+    `["E501", "B008"]`. Per-file: `tests/*` libera `E501` e
+    `__init__.py` libera `F401`.
+  - **Mypy**: `python_version = "3.10"`, permissivo no início
+    (`ignore_missing_imports`, `check_untyped_defs`,
+    `no_implicit_optional`, `warn_unused_ignores`); `tests.*`
+    isenta `disallow_untyped_defs`.
+  - **Pytest**: `[tool.pytest.ini_options]` define `testpaths
+    = ["tests"]` e `addopts = "-q"`.
+  - **Fixes do ruff** (12 → 0): `I001` (imports), `UP035`
+    (`collections.abc.Iterable`), `B905` (`zip(..., strict=False)`
+    em `_garantir_coluna_cartao`), `E741` (renomear variável `l`
+    → `bucket` em `parsers/ailos.py::_classificar_palavras_em_colunas`).
+  - **Fixes do mypy** (4 → 0): `parse_valor_brl(texto: str | None)`
+    (já tratava None, agora o tipo bate); `Ailos._Linha.tem_data`
+    devolve `bool(...)` (`re.match` é `Match | None`, fazia
+    `bool | None`); `linha` reaproveitado com dois tipos
+    diferentes em `_extrair_movimentacoes_conta` → renomeado o
+    `for` interno para `texto_linha`.
+  - `requirements-dev.txt` ganhou `ruff>=0.6` e `mypy>=1.10`.
+  - **Resultado**: `ruff check .` → "All checks passed"; `mypy .`
+    → "Success: no issues found in 12 source files"; `pytest`
+    → 109 passed.
 
 ### 25/05/2026 (Bloco C — Estornos, Comparativo e tendência por cartão)
 

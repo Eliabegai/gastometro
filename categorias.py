@@ -42,7 +42,6 @@ import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
-
 CATEGORIAS_USUARIO_ARQUIVO = Path(__file__).parent / "categorias_usuario.json"
 
 

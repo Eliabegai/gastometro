@@ -26,7 +26,6 @@ from .base import (
     referencia_pelo_vencimento,
 )
 
-
 NOME_BANCO = "Banco do Brasil"
 
 RE_TRANSACAO = re.compile(

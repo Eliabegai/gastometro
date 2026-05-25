@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gastometro"
+version = "0.1.0"
+description = "Extrator de faturas (PDF) para Excel acumulativo com categorização e análises."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Eliabe" }]
+dependencies = [
+    "pdfplumber>=0.11.0",
+    "pandas>=2.2.0",
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+gastometro = "extrator:main"
+
+[tool.setuptools]
+py-modules = ["extrator", "categorias"]
+
+[tool.setuptools.packages.find]
+include = ["parsers*"]
+exclude = ["tests*", "entrada*", "saida*", "exemplos*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = [
+    ".venv",
+    "entrada",
+    "saida",
+    "exemplos",
+]
+
+[tool.ruff.lint]
+# Conjunto pragmático: erros reais, imports organizados, bugbear,
+# upgrades sintáticos e variáveis não usadas. Sem opinião agressiva
+# de estilo (sem D, ANN, etc).
+select = ["E", "F", "I", "B", "UP", "W", "SIM"]
+# E501 (line-length) é tratado pelo formatador; documentação e
+# regex longos passariam sem ganho de leitura.
+# B008 é ruidoso com `Path(...).parent` em constantes de módulo.
+ignore = ["E501", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+"__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.10"
+# Configuração permissiva: o código foi escrito sem tipos completos
+# em alguns lugares (DataFrames do pandas, openpyxl). Endurecer aos
+# poucos via `disallow_untyped_defs = true` por módulo.
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false

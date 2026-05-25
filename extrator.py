@@ -25,8 +25,8 @@ Uso:
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
 from openpyxl.chart import BarChart, LineChart, PieChart, Reference
@@ -41,7 +41,6 @@ from categorias import (
 )
 from parsers import Fatura, extrair_fatura
 from parsers.base import MES_POR_NUMERO
-
 
 RAIZ = Path(__file__).parent
 PASTA_ENTRADA = RAIZ / "entrada"
@@ -195,7 +194,9 @@ def _garantir_coluna_cartao(df: pd.DataFrame) -> pd.DataFrame:
     banco = df.get("Banco", pd.Series([""] * len(df))).astype(str)
     titular = df.get("Titular", pd.Series([""] * len(df))).astype(str)
     df = df.copy()
-    df["Cartão"] = [_identificador_cartao(b, t) for b, t in zip(banco, titular)]
+    df["Cartão"] = [
+        _identificador_cartao(b, t) for b, t in zip(banco, titular, strict=False)
+    ]
     return df
 
 
