@@ -33,8 +33,8 @@ gastometro = "extrator:main"
 py-modules = ["extrator", "categorias"]
 
 [tool.setuptools.packages.find]
-include = ["parsers*"]
-exclude = ["tests*", "entrada*", "saida*", "exemplos*"]
+include = ["parsers*", "db*", "imports*", "export*"]
+exclude = ["tests*", "entrada*", "saida*", "exemplos*", "alembic*", "dados*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
