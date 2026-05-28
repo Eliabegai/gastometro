@@ -18,7 +18,6 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import func
 from sqlmodel import Session, select
 
 from categorias import _normalizar as normalizar_descricao  # noqa: PLC2701
@@ -26,6 +25,7 @@ from categorias import categorizar as categorizar_por_regras
 from db.engine import get_session
 from db.models import (
     FONTE_PDF,
+    FONTE_PLANILHA,
     TIPO_CATEGORIA_DESPESA,
     TIPO_CONTA_OUTRO,
     TIPO_LANCAMENTO_DESPESA,
@@ -172,10 +172,20 @@ def hash_lancamento_excel_legado(
 
 
 def _obter_pessoa_por_nome(session: Session, nome: str) -> Pessoa | None:
+    """Lookup case-insensitive de Pessoa por nome.
+
+    Nota: SQLite `LOWER()` não converte caracteres não-ASCII (ex.
+    `Á → Á` em vez de `á`), então comparação SQL-side falha com
+    nomes acentuados. Carregamos todas (poucas linhas) e comparamos
+    em Python — robusto e simples.
+    """
     if not nome:
         return None
-    stmt = select(Pessoa).where(func.lower(Pessoa.nome) == nome.lower())
-    return session.exec(stmt).first()
+    alvo = nome.strip().lower()
+    for p in session.exec(select(Pessoa)).all():
+        if p.nome.strip().lower() == alvo:
+            return p
+    return None
 
 
 def _obter_ou_criar_pessoa(session: Session, nome: str) -> Pessoa:
@@ -189,10 +199,14 @@ def _obter_ou_criar_pessoa(session: Session, nome: str) -> Pessoa:
 
 
 def _obter_conta_por_nome(session: Session, nome: str) -> Conta | None:
+    """Lookup case-insensitive de Conta — vide nota em `_obter_pessoa_por_nome`."""
     if not nome:
         return None
-    stmt = select(Conta).where(func.lower(Conta.nome) == nome.lower())
-    return session.exec(stmt).first()
+    alvo = nome.strip().lower()
+    for c in session.exec(select(Conta)).all():
+        if c.nome.strip().lower() == alvo:
+            return c
+    return None
 
 
 def _obter_ou_criar_conta(
@@ -233,10 +247,14 @@ def _identificador_cartao(banco: str, titular: str) -> str:
 
 
 def _obter_categoria_por_nome(session: Session, nome: str) -> Categoria | None:
+    """Lookup case-insensitive de Categoria — vide nota em `_obter_pessoa_por_nome`."""
     if not nome:
         return None
-    stmt = select(Categoria).where(func.lower(Categoria.nome) == nome.lower())
-    return session.exec(stmt).first()
+    alvo = nome.strip().lower()
+    for c in session.exec(select(Categoria)).all():
+        if c.nome.strip().lower() == alvo:
+            return c
+    return None
 
 
 def _obter_ou_criar_categoria(
@@ -427,6 +445,144 @@ def upsert_fatura(
         inseridos += 1
 
     return fatura.id, inseridos
+
+
+def existe_fatura_pdf(
+    *,
+    conta_nome: str,
+    ano: int,
+    mes: int,
+    session: Session | None = None,
+) -> bool:
+    """Existe alguma Fatura PDF pra (conta, ano, mês)?
+
+    Usado pela importação da planilha familiar pra pular linhas de
+    cartão quando já temos o PDF detalhado da mesma referência —
+    evita duplicar o valor agregado.
+    """
+    if session is None:
+        with get_session() as s:
+            return existe_fatura_pdf(
+                conta_nome=conta_nome, ano=ano, mes=mes, session=s
+            )
+
+    referencia = f"{ano:04d}-{mes:02d}"
+    conta = _obter_conta_por_nome(session, conta_nome)
+    if conta is None:
+        return False
+    stmt = (
+        select(Fatura.id)
+        .where(
+            Fatura.conta_id == conta.id,
+            Fatura.referencia_mes == referencia,
+        )
+        .limit(1)
+    )
+    return session.exec(stmt).first() is not None
+
+
+def upsert_lancamento_manual(
+    *,
+    descricao: str,
+    valor: float | Decimal,
+    ano: int,
+    mes: int,
+    categoria_nome: str,
+    pessoa_nome: str | None = None,
+    conta_nome: str | None = None,
+    tipo: str = TIPO_LANCAMENTO_DESPESA,
+    categoria_tipo: str = TIPO_CATEGORIA_DESPESA,
+    chave_planilha: str | None = None,
+    fonte: str = FONTE_PLANILHA,
+    arquivo_origem: str | None = None,
+    session: Session | None = None,
+) -> tuple[int | None, bool]:
+    """Insere um lançamento sintético (planilha mensal / entrada manual).
+
+    Diferente de `upsert_fatura`, aqui cada linha é independente: não
+    pertence a uma fatura. A data é fixada no 1º dia do mês de
+    referência (esses valores na planilha são agregados mensais sem
+    dia exato).
+
+    Idempotência via `hash_lancamento_planilha(chave_planilha, ano,
+    mês, pessoa)`. Se `chave_planilha` não for passada, usa
+    `descricao` como chave.
+
+    Devolve `(lancamento_id, inserido_agora)`. Quando já existe, o
+    retorno é `(id_existente, False)`.
+    """
+    if session is None:
+        with get_session() as s:
+            return upsert_lancamento_manual(
+                descricao=descricao,
+                valor=valor,
+                ano=ano,
+                mes=mes,
+                categoria_nome=categoria_nome,
+                pessoa_nome=pessoa_nome,
+                conta_nome=conta_nome,
+                tipo=tipo,
+                categoria_tipo=categoria_tipo,
+                chave_planilha=chave_planilha,
+                fonte=fonte,
+                arquivo_origem=arquivo_origem,
+                session=s,
+            )
+
+    chave = chave_planilha or descricao
+    h = hash_lancamento_planilha(
+        categoria_planilha=chave,
+        ano=ano,
+        mes=mes,
+        pessoa_nome=pessoa_nome,
+    )
+
+    existente = session.exec(
+        select(Lancamento).where(Lancamento.hash_dedupe == h)
+    ).first()
+    if existente is not None:
+        return existente.id, False
+
+    pessoa = (
+        _obter_ou_criar_pessoa(session, pessoa_nome)
+        if pessoa_nome
+        else None
+    )
+    conta = (
+        _obter_ou_criar_conta(
+            session, nome=conta_nome, tipo=TIPO_CONTA_OUTRO, pessoa=pessoa
+        )
+        if conta_nome
+        else None
+    )
+    categoria = _obter_ou_criar_categoria(
+        session, nome=categoria_nome, tipo=categoria_tipo
+    )
+
+    valor_dec = _arred(valor)
+    data_ref = date(ano, mes, 1)
+    referencia = f"{ano:04d}-{mes:02d}"
+
+    lanc = Lancamento(
+        data=data_ref,
+        descricao=descricao,
+        valor=abs(valor_dec),
+        tipo=tipo,
+        categoria_id=categoria.id,
+        conta_id=conta.id if conta else None,
+        pessoa_id=pessoa.id if pessoa else None,
+        fatura_id=None,
+        referencia_mes=referencia,
+        parcela_atual=None,
+        parcela_total=None,
+        cidade=None,
+        fonte=fonte,
+        arquivo_origem=arquivo_origem,
+        hash_dedupe=h,
+    )
+    session.add(lanc)
+    session.flush()
+    return lanc.id, True
 
 
 def _parse_parcela(texto: str | None) -> tuple[int | None, int | None]:

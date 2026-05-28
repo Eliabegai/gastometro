@@ -446,9 +446,42 @@ A UI sempre lê do banco em `dados/gastometro.db`. Se você ainda não
 populou, rode antes:
 
 ```bash
-gastometro                         # processa PDFs em entrada/
-python -m imports.migrar_excel_legado  # importa saida/gastometro.xlsx histórico
+gastometro                                # processa PDFs em entrada/
+python -m imports.migrar_excel_legado     # importa saida/gastometro.xlsx histórico
+python -m imports.importar_planilha_familiar  # importa despesas_Eliabe_Ana.xlsx (Total)
 ```
+
+## Importação da planilha familiar (Fase 3)
+
+O script `imports/importar_planilha_familiar.py` lê a aba **Total** da
+`despesas_Eliabe_Ana.xlsx` (layout pivotado: categorias nas linhas,
+meses/anos nas colunas) e gera 1 lançamento por célula no banco.
+
+```bash
+python -m imports.importar_planilha_familiar
+# ou apontando pra outro arquivo:
+python -m imports.importar_planilha_familiar caminho/da/planilha.xlsx
+```
+
+Regras aplicadas durante o import:
+
+- **Linhas de soma ignoradas**: `Total Gastos`, `Saldo`, `Défice |
+  Superávit`, `Poupança`, `Meta`, `Dízimos` (soma de Eliabe+Ana),
+  `Faculdade` (igual à linha Uninter detalhada), `Outros` (soma da
+  seção de despesas diversas).
+- **Regra anti-PDF**: linhas "Cartão de Crédito - Viacredi/Nubank
+  Eliabe" e "Cartão de Crédito - Nubank Ana" pulam meses onde já
+  existe a fatura PDF correspondente (o PDF tem o detalhe granular).
+- **Receitas**: linhas `Ganhos Eliabe`, `Ganhos Ana Letícia` e
+  `Empréstimo` viram `tipo='receita'` com categorias `Salário` /
+  `Empréstimo Recebido`.
+- **Idempotência**: hash determinístico por `(descrição canônica,
+  ano, mês, pessoa)`. Reimport não duplica.
+- **Data**: como a planilha tem só mês/ano, fixa no 1º dia do mês de
+  referência (`YYYY-MM-01`).
+
+Pra incluir uma linha nova da planilha, edite o dicionário `CONFIG`
+em `imports/importar_planilha_familiar.py`.
 
 ## Estrutura do projeto
 
@@ -461,7 +494,7 @@ gastometro/
 ├── categorias.py                  # regras de categorização (fallback)
 ├── parsers/                       # parsers por banco (PDF → Fatura)
 ├── db/                            # SQLModel + Alembic + repo + backup
-├── imports/                       # ETL legado (Excel → banco)
+├── imports/                       # ETL: Excel legado + planilha familiar → banco
 ├── export/                        # banco → Excel
 ├── app/                           # UI Streamlit (Fase 2)
 │   ├── streamlit_app.py           # entrypoint
@@ -484,7 +517,7 @@ O projeto usa `pytest`, `ruff` (lint + imports + upgrades) e `mypy`
 ```bash
 pip install -r requirements-dev.txt   # ou: pip install -e ".[dev]"
 
-python -m pytest                       # 145 testes (parsers + repo + export + app)
+python -m pytest                       # 153 testes (parsers + repo + export + app + planilha)
 ruff check .                           # lint
 ruff check . --fix                     # lint com auto-fix
 mypy .                                 # tipos
