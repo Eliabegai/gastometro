@@ -541,6 +541,142 @@ descrição+ano+mês+pessoa), você pode re-baixar quantas vezes quiser —
 só os valores novos/alterados entram. Linhas duplicadas viram
 "skip" silencioso.
 
+## Rodar com Docker (full-time em qualquer máquina)
+
+Pra ter o app rodando 24/7 num mini-PC, Raspberry Pi, NAS ou Mac que
+fica sempre ligado — e poder acessar de outros PCs / celular via
+browser na mesma rede — basta o `docker-compose.yml` incluso.
+
+Pré-requisitos: [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+(Mac/Windows) ou Docker Engine + Compose (Linux).
+
+### Subir, parar, atualizar
+
+```bash
+# 1ª vez (build da imagem + sobe em background):
+docker compose up -d --build
+
+# Acompanhar logs:
+docker compose logs -f gastometro
+
+# Parar (preserva os volumes ./dados, ./entrada, ./saida):
+docker compose down
+
+# Atualizar após mexer no código:
+docker compose up -d --build
+
+# Status / saúde:
+docker compose ps
+```
+
+Depois de subir, acesse:
+
+- No host: `http://localhost:8501`
+- Em outros PCs/celular na mesma rede: `http://<ip-do-host>:8501`
+  (descubra o IP com `ipconfig getifaddr en0` no Mac ou
+  `hostname -I` no Linux).
+
+### Detalhes da arquitetura
+
+- **Imagem multi-arch**: `python:3.12-slim` cobre Mac (M1/M2/M3 arm64
+  e Intel amd64), Linux x86 e Raspberry Pi 4/5 (arm64) sem
+  configuração extra.
+- **Bind mounts** (3): `./dados → /data` (banco + backups), `./entrada
+  → /app/entrada` (PDFs arquivados pelo uploader) e `./saida →
+  /app/saida` (Excel acumulativo). Você vê e mexe nos arquivos
+  direto da pasta do projeto.
+- **Usuário não-root** (UID/GID 1000): casa com o dono do bind mount
+  em Linux/Mac. Pra ajustar ao seu UID real, rode
+  `APP_UID=$(id -u) APP_GID=$(id -g) docker compose up -d --build`.
+- **Schema automático**: `garantir_schema()` roda `alembic upgrade
+  head` no boot — primeira subida cria o banco do zero, subidas
+  seguintes são no-op.
+- **Restart automático**: `restart: unless-stopped` traz o app de
+  volta após reboot do host ou crash.
+- **Healthcheck**: bate em `/_stcore/health` a cada 30s. `docker
+  compose ps` mostra `(healthy)` quando tudo OK.
+
+### Variáveis de ambiente úteis
+
+Pode definir no `.env` da raiz (mesmo arquivo que o `direnv` usa):
+
+```bash
+# .env
+GASTOMETRO_PLANILHA_URL=https://docs.google.com/spreadsheets/d/.../edit
+GASTOMETRO_BACKUPS_KEEP=60         # default 30
+```
+
+### Backup off-site (opcional, com Litestream)
+
+Pra replicar o SQLite continuamente pra S3 / Backblaze B2 / MinIO,
+descomente o bloco `litestream:` do `docker-compose.yml` e siga as
+instruções inline. Aí restaurar em outro PC é um comando:
+
+```bash
+litestream restore -o dados/gastometro.db s3://meu-bucket/gastometro.db
+```
+
+## Mudar de PC / sincronizar 2 PCs
+
+Três abordagens, do melhor pro mais simples — escolha conforme a
+realidade do seu uso.
+
+### A. Servidor central + clientes web (recomendado)
+
+Suba o container Docker num PC/Mac/Raspberry/NAS que fica sempre
+ligado (seção acima). Os outros PCs **não rodam o app** — só abrem
+`http://<ip-do-servidor>:8501` no browser.
+
+- Vantagem: zero cópia de banco, zero risco de conflito, dados
+  sempre sincronizados.
+- Quando faz sentido: você tem uma máquina sempre ligada (Mac mini,
+  mini-PC, Raspberry Pi 4+).
+
+### B. Migração one-shot via `restaurar_banco`
+
+Quando trocar de notebook ou levar os dados pra outra máquina:
+
+```bash
+# No PC antigo, copie o banco:
+scp dados/gastometro.db usuario@novo-pc:~/backup_gastometro.db
+# (ou via AirDrop, pen drive, Drive…)
+
+# No PC novo, clone o repo, instale e restaure:
+git clone https://github.com/.../gastometro && cd gastometro
+pip install -r requirements.txt
+python -m scripts.restaurar_banco ~/backup_gastometro.db
+streamlit run app/streamlit_app.py
+```
+
+O `scripts/restaurar_banco.py`:
+
+- Valida que é um SQLite válido (header `SQLite format 3`).
+- Faz **backup automático** do banco atual (motivo
+  `pre_restauracao`) antes de sobrescrever — você pode reverter via
+  `dados/backups/`.
+- Roda `alembic upgrade head` no banco restaurado (útil se veio de
+  uma versão um pouco mais antiga do app).
+- Flags: `--destino <path>` muda o destino; `--sem-checagem` ignora
+  magic bytes; `--sem-migration` pula o Alembic.
+
+### C. Pasta `dados/` sincronizada via Drive/iCloud/Dropbox
+
+Use `GASTOMETRO_DADOS_DIR` (ou no Docker, mude o bind mount) pra
+apontar pra uma pasta sincronizada:
+
+```bash
+# Mac com iCloud Drive:
+export GASTOMETRO_DADOS_DIR="$HOME/Library/Mobile Documents/com~apple~CloudDocs/gastometro"
+```
+
+> **Aviso**: SQLite **não tolera escrita concorrente** num arquivo
+> sincronizado por cloud. Use essa abordagem só se você **nunca**
+> abre o app em dois PCs ao mesmo tempo. Se rolar conflito, o serviço
+> de sync vai criar `gastometro (conflicted copy).db` e você terá
+> que escolher manualmente qual versão manter.
+>
+> Pra uso simultâneo seguro, prefira a abordagem **A**.
+
 ## Consolidar contas duplicadas
 
 Se você vier de uma versão antiga do projeto, talvez tenha no banco
@@ -564,19 +700,23 @@ desse passo**.
 gastometro/
 ├── entrada/                       # coloque os PDFs aqui (gitignored)
 ├── saida/                         # gastometro.xlsx é gerado aqui (gitignored)
-├── dados/                         # SQLite + backups (gitignored)
+├── dados/                         # SQLite + backups + cache de URL (gitignored)
 ├── extrator.py                    # CLI + orquestra DB + export Excel
 ├── categorias.py                  # regras de categorização (fallback)
 ├── parsers/                       # parsers por banco (PDF → Fatura)
-├── db/                            # SQLModel + Alembic + repo + backup
-├── imports/                       # ETL: Excel legado + planilha familiar → banco
+├── db/                            # SQLModel + Alembic + repo + backup + consolidação
+├── imports/                       # ETL: Excel legado + planilha familiar + Google Sheets
 ├── export/                        # banco → Excel
+├── scripts/                       # CLIs utilitários (restaurar_banco, etc.)
 ├── app/                           # UI Streamlit (Fase 2)
 │   ├── streamlit_app.py           # entrypoint
 │   ├── helpers.py                 # filtros, formato BR, cache
-│   └── paginas/                   # dashboard, lancamentos, faturas, categorias
+│   └── paginas/                   # dashboard, lancamentos, faturas, categorias, importar
 ├── alembic/                       # migrations versionadas
 ├── tests/                         # pytest (parsers, repo, export, app)
+├── Dockerfile                     # imagem multi-arch (amd64 + arm64)
+├── docker-compose.yml             # serviço gastometro + Litestream opcional
+├── .dockerignore                  # enxuga a imagem (sem .venv, dados, tests…)
 ├── pyproject.toml                 # build + ruff + mypy + pytest
 ├── requirements.txt
 ├── requirements-dev.txt           # requirements.txt + pytest + ruff + mypy
@@ -592,7 +732,7 @@ O projeto usa `pytest`, `ruff` (lint + imports + upgrades) e `mypy`
 ```bash
 pip install -r requirements-dev.txt   # ou: pip install -e ".[dev]"
 
-python -m pytest                       # 182 testes (parsers + repo + export + app + planilha + consolidação + upload + sync)
+python -m pytest                       # 191 testes (parsers + repo + export + app + planilha + consolidação + upload + sync + restore)
 ruff check .                           # lint
 ruff check . --fix                     # lint com auto-fix
 mypy .                                 # tipos

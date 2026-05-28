@@ -1,0 +1,82 @@
+# docker-compose.yml — gastometro full-time
+#
+# Subir:    docker compose up -d
+# Parar:    docker compose down
+# Logs:     docker compose logs -f gastometro
+# Rebuild:  docker compose up -d --build
+# Status:   docker compose ps
+#
+# Volumes: usamos bind mounts pra que os arquivos (banco SQLite, PDFs
+# de entrada e Excel de saída) fiquem visíveis na pasta do projeto
+# no host. Isso facilita inspeção e backup.
+#
+# Acesso: http://localhost:8501 no próprio host;
+#         http://<ip-da-maquina>:8501 dos outros PCs/celular na LAN.
+
+services:
+  gastometro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Casa com o UID/GID do usuário no Mac/Linux (default 1000).
+        # No Mac, `id -u` costuma ser 501 — sobrescreva com:
+        # APP_UID=$(id -u) APP_GID=$(id -g) docker compose up -d --build
+        APP_UID: ${APP_UID:-1000}
+        APP_GID: ${APP_GID:-1000}
+    image: gastometro:latest
+    container_name: gastometro
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      # Banco e backups moram em /data (bind mount → ./dados).
+      GASTOMETRO_DADOS_DIR: /data
+      GASTOMETRO_BACKUPS_KEEP: "30"
+      # Timezone afeta carimbos de backup e timestamps na UI.
+      TZ: America/Sao_Paulo
+      # URL salva da planilha familiar (Google Sheets). Opcional —
+      # pode ser também colada na UI (fica em /data/planilha_url.txt).
+      GASTOMETRO_PLANILHA_URL: ${GASTOMETRO_PLANILHA_URL:-}
+    volumes:
+      # Banco + backups + cache da URL da planilha.
+      - ./dados:/data
+      # PDFs de fatura recebidos via uploader são arquivados aqui.
+      - ./entrada:/app/entrada
+      # Excel acumulativo regenerado pela UI / CLI.
+      - ./saida:/app/saida
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────
+  # Litestream (opcional) — replicação contínua do SQLite pra S3/B2.
+  #
+  # Pra ativar:
+  # 1. Descomente o bloco abaixo e o `litestream.yml` na raiz do
+  #    projeto (crie seguindo https://litestream.io/getting-started/).
+  # 2. Configure as credenciais no `.env` da raiz:
+  #       LITESTREAM_ACCESS_KEY_ID=...
+  #       LITESTREAM_SECRET_ACCESS_KEY=...
+  # 3. Rode `docker compose up -d`.
+  #
+  # Com Litestream, restaurar o banco em outro PC é um comando:
+  #   litestream restore -o dados/gastometro.db s3://bucket/gastometro.db
+  # ─────────────────────────────────────────────────────────────────
+  #
+  # litestream:
+  #   image: litestream/litestream:0.3
+  #   container_name: gastometro-litestream
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - gastometro
+  #   environment:
+  #     LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID}
+  #     LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY}
+  #   volumes:
+  #     - ./dados:/data
+  #     - ./litestream.yml:/etc/litestream.yml:ro
+  #   command: ["replicate"]
