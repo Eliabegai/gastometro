@@ -238,19 +238,52 @@ CONFIG: dict[str, LinhaConfig] = {
     ),
 }
 
-# Nomes que aparecem na coluna A mas devem ser puladas (totais,
-# saldos, fórmulas, duplicações).
+# Nomes que aparecem na coluna A mas devem ser pulados (totais,
+# saldos, fórmulas, duplicações). Quando o mesmo nome se repete em
+# linhas diferentes com semânticas opostas (caso clássico: "Outros"
+# como soma de despesas vs "Outros" como receita), use
+# `INDICE_OVERRIDE` abaixo pra desambiguar pela posição na planilha.
 LINHAS_IGNORADAS = {
     "descrição",
     "dízimos",       # linha 17: soma de Eliabe + Ana (usamos 18/19)
     "faculdade",     # linha 20: igual à 21 'Faculdade - Uninter'
-    "outros",        # linhas 22/45/61/63: soma das despesas de "Outros Gastos"
     "poupança",      # linha 54: saldo acumulado, não fluxo mensal
     "meta",          # linha 55: objetivo, não realização
     "total gastos",  # linha 56
     "défice | superávit",  # linhas 57 e 65
     "total",         # linha 64: soma de receitas
     "saldo",         # linha 66
+}
+
+# Sentinel: `INDICE_OVERRIDE[i] = None` significa "ignore essa linha
+# específica mesmo que o nome esteja em CONFIG/LINHAS_IGNORADAS".
+_IGNORAR = "IGNORAR_ESSA_LINHA"
+
+# Override por número da linha (0-indexed, como `iter_rows` devolve).
+# Usado pra desambiguar linhas com o mesmo nome em posições diferentes.
+# Na planilha familiar atual:
+#   linha 22 'Outros' → soma da seção de despesas misc (ignora)
+#   linha 45 'Outros' → uma despesa individual dentro da seção
+#   linha 61 'Outros' → RECEITA (subseção pós-Ganhos Ana)
+#   linha 63 'Outros' → RECEITA (sub-detalhe)
+INDICE_OVERRIDE: dict[int, LinhaConfig | str] = {
+    22: _IGNORAR,
+    45: LinhaConfig(
+        descricao="Outros (gastos diversos)",
+        categoria="Outros Gastos",
+    ),
+    61: LinhaConfig(
+        descricao="Outras Receitas",
+        categoria="Outras Receitas",
+        tipo_lancamento=TIPO_LANCAMENTO_RECEITA,
+        tipo_categoria=TIPO_CATEGORIA_RECEITA,
+    ),
+    63: LinhaConfig(
+        descricao="Outras Receitas (avulsas)",
+        categoria="Outras Receitas",
+        tipo_lancamento=TIPO_LANCAMENTO_RECEITA,
+        tipo_categoria=TIPO_CATEGORIA_RECEITA,
+    ),
 }
 
 
@@ -371,14 +404,25 @@ def migrar(caminho: str | Path = "despesas_Eliabe_Ana.xlsx") -> Resultado:
         chave = _chave(nome_bruto)
         if not chave:
             continue
-        if chave in LINHAS_IGNORADAS:
+
+        # Override por índice tem prioridade — desambigua nomes
+        # repetidos em posições diferentes (ex: "Outros" como soma de
+        # despesas vs "Outros" como receita).
+        override = INDICE_OVERRIDE.get(linha_idx)
+        if override is _IGNORAR:
             resultado.linhas_ignoradas += 1
             continue
-
-        conf = CONFIG.get(chave)
-        if conf is None:
-            resultado.linhas_desconhecidas.append(str(nome_bruto))
+        if isinstance(override, LinhaConfig):
+            conf = override
+        elif chave in LINHAS_IGNORADAS:
+            resultado.linhas_ignoradas += 1
             continue
+        else:
+            conf_opt = CONFIG.get(chave)
+            if conf_opt is None:
+                resultado.linhas_desconhecidas.append(str(nome_bruto))
+                continue
+            conf = conf_opt
 
         resultado.linhas_processadas += 1
 

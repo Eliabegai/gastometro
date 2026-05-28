@@ -87,9 +87,10 @@ def _planilha_sintetica(path: Path) -> Path:
     ws.cell(row=13, column=1, value="Categoria Inexistente XYZ")
     ws.cell(row=13, column=2, value=50.00)
 
-    # linha 14 (idx 13): 'Outros' (soma da seção) — DEVE SER IGNORADA
-    ws.cell(row=14, column=1, value="Outros")
-    ws.cell(row=14, column=2, value=300.00)
+    # linha 14 (idx 13): nome adicional desconhecido pra confirmar
+    # contagem total
+    ws.cell(row=14, column=1, value="Categoria Inexistente ABC")
+    ws.cell(row=14, column=2, value=10.00)
 
     wb.save(path)
     return path
@@ -106,10 +107,13 @@ def test_planilha_sintetica_imports_corretamente(
 
     # Linhas mapeadas: Moradia, Luz, Cartão Nubank Eliabe, Ganhos Eliabe = 4
     assert res.linhas_processadas == 4
-    # Total Gastos + Saldo + Outros = 3 ignoradas
-    assert res.linhas_ignoradas == 3
-    # 'Categoria Inexistente XYZ' = 1 desconhecida
-    assert res.linhas_desconhecidas == ["Categoria Inexistente XYZ"]
+    # Total Gastos + Saldo = 2 ignoradas
+    assert res.linhas_ignoradas == 2
+    # 'Categoria Inexistente XYZ' + 'Categoria Inexistente ABC' = 2 desconhecidas
+    assert sorted(res.linhas_desconhecidas) == [
+        "Categoria Inexistente ABC",
+        "Categoria Inexistente XYZ",
+    ]
 
     # Inseridos: 12 (Moradia) + 2 (Luz, sem o '-') + 3 (Cartão) + 2 (Ganhos) = 19
     assert res.inseridos == 19
@@ -217,9 +221,34 @@ def test_data_no_primeiro_dia_do_mes(
     assert set(moradia["data"]) == datas_esperadas
 
 
+def test_planilha_real_outros_como_receita(banco_temporario) -> None:
+    """Garante que as duas linhas 'Outros' depois das receitas
+    (índices 61 e 63 na planilha real) entram como `tipo='receita'`
+    com categoria `Outras Receitas`.
+
+    Esse teste roda direto na planilha real do projeto (caso esteja
+    presente). Skip silencioso quando o arquivo não existe — pra não
+    quebrar CI em forks.
+    """
+    from pathlib import Path
+
+    from db.repository import listar_lancamentos_df
+    from imports.importar_planilha_familiar import migrar
+
+    real = Path("despesas_Eliabe_Ana.xlsx")
+    if not real.exists():
+        pytest.skip("planilha real não encontrada no workspace")
+
+    migrar(real)
+    df = listar_lancamentos_df()
+    outras = df[df["categoria"] == "Outras Receitas"]
+    assert not outras.empty, "esperava lançamentos em 'Outras Receitas'"
+    assert (outras["tipo"] == "receita").all()
+
+
 @pytest.mark.parametrize(
     "ignorada",
-    ["Descrição", "Total Gastos", "Saldo", "Outros", "Dízimos", "Faculdade"],
+    ["Descrição", "Total Gastos", "Saldo", "Faculdade", "Total", "Poupança"],
 )
 def test_linhas_de_soma_sao_ignoradas(
     tmp_path: Path, banco_temporario, ignorada: str

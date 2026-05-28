@@ -3,13 +3,15 @@
 Mostra:
   - Seletor de ano (default = ano corrente; opção 'Todos os anos'
     disponível pra ver o histórico inteiro quando precisar).
-  - KPIs: total do último mês, vs mês anterior, total do ano filtrado,
-    quantidade de lançamentos.
-  - Gráfico de barras: total por mês (cronológico) dentro do recorte.
-  - Gráfico de pizza: distribuição por categoria (top N + outros).
-  - Tabela: top 10 maiores gastos do mês mais recente do recorte.
+  - KPIs: despesa e receita do mês mais recente (com delta vs anterior),
+    despesa, receita e saldo do ano todo.
+  - Gráfico de barras: despesas vs receitas por mês (agrupado).
+  - Gráfico de pizza: distribuição de **despesas** por categoria
+    (receitas ficam de fora porque misturam fluxo de entrada com saída).
+  - Tabela: top 10 maiores despesas do mês mais recente do recorte.
 
-Quando o banco está vazio, mostra uma chamada pra rodar o CLI.
+Princípio: receita NUNCA é somada com despesa num mesmo KPI. KPIs
+ficam sempre rotulados explicitamente.
 """
 
 from __future__ import annotations
@@ -30,94 +32,130 @@ from app.helpers import (
 TOP_CATEGORIAS_GRAFICO = 10
 
 
-def _kpi_card(coluna, titulo: str, valor: str, delta: str | None = None) -> None:
-    coluna.metric(titulo, valor, delta=delta)
+def _kpi_card(
+    coluna,
+    titulo: str,
+    valor: str,
+    delta: str | None = None,
+    *,
+    delta_color: str = "normal",
+) -> None:
+    """`delta_color`: "normal" (verde +/vermelho -), "inverse" (oposto,
+    pra despesas), "off" (sempre cinza, pra rótulos textuais como
+    Superávit/Déficit)."""
+    coluna.metric(titulo, valor, delta=delta, delta_color=delta_color)
 
 
-def _calcular_kpis(df: pd.DataFrame) -> dict[str, str | None]:
-    """Total último mês, variação vs mês anterior, total acumulado, qtde."""
+def _soma_por_tipo(df: pd.DataFrame, tipo: str) -> float:
+    """Soma absoluta do tipo (`despesa`, `receita`, `estorno`).
+
+    Para `receita` inclui estornos (também são entradas reais — crédito
+    devolvido pelo banco). Para `despesa` exclui estornos. Tudo em
+    módulo (estornos vêm com sinal negativo do banco).
+    """
     if df.empty:
-        return {
-            "total_ultimo": "R$ 0,00",
-            "delta_anterior": None,
-            "total_acumulado": "R$ 0,00",
-            "qtde": "0",
-            "label_ultimo": "—",
-        }
+        return 0.0
+    if tipo == "receita":
+        sub = df[df["tipo"].isin(["receita", "estorno"])]
+    else:
+        sub = df[df["tipo"] == tipo]
+    if sub.empty:
+        return 0.0
+    return float(sub["valor"].abs().sum())
 
-    refs = sorted(
-        {r for r in df["referencia_mes"].astype(str) if r and r != "nan"},
-        key=chave_ord_ref_iso,
-    )
-    ultimo = refs[-1] if refs else ""
-    anterior = refs[-2] if len(refs) >= 2 else ""
 
-    sub_ult = df[df["referencia_mes"] == ultimo]
-    sub_ant = df[df["referencia_mes"] == anterior] if anterior else pd.DataFrame()
-
-    total_ult = float(sub_ult["valor"].sum()) if not sub_ult.empty else 0.0
-    total_ant = float(sub_ant["valor"].sum()) if not sub_ant.empty else 0.0
-
-    delta: str | None = None
+def _formatar_delta(atual: float, anterior: float, label_anterior: str) -> str | None:
+    """Formata o delta entre dois valores agregados (mês atual vs anterior)."""
+    if anterior == 0 and atual == 0:
+        return None
+    diff = atual - anterior
+    sinal = "+" if diff >= 0 else "-"
     if anterior:
-        diff = total_ult - total_ant
-        sinal = "+" if diff >= 0 else "-"
-        if total_ant:
-            pct = (diff / total_ant) * 100.0
-            delta = (
-                f"{sinal}{formatar_brl(abs(diff))[3:]} "
-                f"({pct:+.1f}% vs {ref_para_nome_br(anterior)})"
-            )
-        else:
-            delta = f"{sinal}{formatar_brl(abs(diff))[3:]} (mês anterior = R$ 0,00)"
+        pct = (diff / anterior) * 100.0
+        return (
+            f"{sinal}{formatar_brl(abs(diff))[3:]} "
+            f"({pct:+.1f}% vs {label_anterior})"
+        )
+    return f"{sinal}{formatar_brl(abs(diff))[3:]} ({label_anterior} = R$ 0,00)"
 
+
+def _refs_ordenadas(df: pd.DataFrame) -> list[str]:
+    if df.empty:
+        return []
+    refs = {r for r in df["referencia_mes"].astype(str) if r and r != "nan"}
+    return sorted(refs, key=chave_ord_ref_iso)
+
+
+def _kpis_mes(df: pd.DataFrame, ref: str, ref_anterior: str) -> dict[str, float]:
+    """Despesa e receita do mês `ref` (+ deltas vs `ref_anterior`)."""
+    cur = df[df["referencia_mes"] == ref]
+    prev = (
+        df[df["referencia_mes"] == ref_anterior]
+        if ref_anterior
+        else pd.DataFrame(columns=df.columns)
+    )
     return {
-        "total_ultimo": formatar_brl(total_ult),
-        "delta_anterior": delta,
-        "total_acumulado": formatar_brl(float(df["valor"].sum())),
-        "qtde": f"{len(df):,}".replace(",", "."),
-        "label_ultimo": ref_para_nome_br(ultimo) or "—",
+        "desp_atual": _soma_por_tipo(cur, "despesa"),
+        "rec_atual": _soma_por_tipo(cur, "receita"),
+        "desp_ant": _soma_por_tipo(prev, "despesa"),
+        "rec_ant": _soma_por_tipo(prev, "receita"),
     }
 
 
 def _grafico_barras_mensal(df: pd.DataFrame) -> None:
-    """Bar chart de total por mês (refs em ordem cronológica)."""
+    """Barras mensais: 1 par por mês (Despesa vs Receita)."""
     if df.empty:
         return
 
-    soma_por_ref = (
-        df.groupby("referencia_mes")["valor"].sum().reset_index()
+    sub = df[df["tipo"].isin(["despesa", "receita", "estorno"])].copy()
+    if sub.empty:
+        return
+
+    sub["valor_abs"] = sub["valor"].abs()
+    # Trata estorno como receita pra agregação visual
+    sub["categoria_fluxo"] = sub["tipo"].replace({"estorno": "Receita"}).replace(
+        {"despesa": "Despesa", "receita": "Receita"}
     )
-    soma_por_ref["referencia_mes"] = soma_por_ref["referencia_mes"].astype(str)
-    soma_por_ref = soma_por_ref.sort_values(
+    agg = (
+        sub.groupby(["referencia_mes", "categoria_fluxo"])["valor_abs"]
+        .sum()
+        .reset_index()
+    )
+    agg["referencia_mes"] = agg["referencia_mes"].astype(str)
+    agg = agg.sort_values(
         "referencia_mes", key=lambda s: s.map(chave_ord_ref_iso)
     )
-    soma_por_ref["mes_label"] = soma_por_ref["referencia_mes"].map(
-        ref_para_nome_br
-    )
+    agg["mes_label"] = agg["referencia_mes"].map(ref_para_nome_br)
 
     fig = px.bar(
-        soma_por_ref,
+        agg,
         x="mes_label",
-        y="valor",
-        title="Total por mês",
-        labels={"mes_label": "Mês", "valor": "Total (R$)"},
-        text="valor",
+        y="valor_abs",
+        color="categoria_fluxo",
+        barmode="group",
+        title="Despesas × Receitas por mês",
+        labels={
+            "mes_label": "Mês",
+            "valor_abs": "Total (R$)",
+            "categoria_fluxo": "Fluxo",
+        },
+        color_discrete_map={"Despesa": "#EF553B", "Receita": "#00CC96"},
     )
-    fig.update_traces(texttemplate="R$ %{text:,.0f}", textposition="outside")
-    fig.update_layout(
-        yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f", showlegend=False
-    )
+    fig.update_layout(yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f")
     st.plotly_chart(fig, use_container_width=True)
 
 
 def _grafico_pizza_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAFICO) -> None:
-    """Pizza: top N categorias + 'Outras' (agregado), só gastos (valor > 0)."""
+    """Pizza: top N categorias de **despesa** + 'Outras'.
+
+    Receitas ficam fora — categorizar "Salário" e "Dízimo" no mesmo
+    gráfico não tem leitura útil.
+    """
     if df.empty:
         return
-    gastos = df[df["valor"] > 0]
+    gastos = df[(df["tipo"] == "despesa") & (df["valor"] > 0)]
     if gastos.empty:
-        st.info("Sem gastos no período filtrado (só estornos / receitas).")
+        st.info("Sem despesas no período filtrado.")
         return
 
     soma_cat = (
@@ -133,7 +171,7 @@ def _grafico_pizza_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAF
     fig = px.pie(
         names=agg.index,
         values=agg.values,
-        title=f"Distribuição por categoria (top {top_n})",
+        title=f"Despesas por categoria (top {top_n})",
         hole=0.35,
     )
     fig.update_traces(textposition="inside", textinfo="percent+label")
@@ -141,17 +179,16 @@ def _grafico_pizza_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAF
 
 
 def _maiores_gastos_recentes(df: pd.DataFrame, top_n: int = 10) -> None:
-    """Tabela: maiores gastos do último mês registrado."""
+    """Tabela: maiores **despesas** do último mês com dados."""
     if df.empty:
         return
-    refs = sorted(
-        {r for r in df["referencia_mes"].astype(str) if r and r != "nan"},
-        key=chave_ord_ref_iso,
-    )
+    refs = _refs_ordenadas(df)
     if not refs:
         return
     ultimo = refs[-1]
-    sub = df[(df["referencia_mes"] == ultimo) & (df["valor"] > 0)].copy()
+    sub = df[
+        (df["referencia_mes"] == ultimo) & (df["tipo"] == "despesa")
+    ].copy()
     if sub.empty:
         return
     sub = sub.sort_values("valor", ascending=False).head(top_n)
@@ -165,7 +202,7 @@ def _maiores_gastos_recentes(df: pd.DataFrame, top_n: int = 10) -> None:
             "valor": "Valor (R$)",
         }
     )
-    st.subheader(f"Top {top_n} gastos — {ref_para_nome_br(ultimo)}")
+    st.subheader(f"Top {top_n} despesas — {ref_para_nome_br(ultimo)}")
     st.dataframe(
         sub,
         use_container_width=True,
@@ -202,24 +239,63 @@ def render() -> None:
         )
         return
 
-    kpis = _calcular_kpis(df_recorte)
-    rotulo_periodo = (
-        f"Total do ano {ano}" if ano is not None else "Total (todo o histórico)"
+    refs = _refs_ordenadas(df_recorte)
+    ultimo = refs[-1] if refs else ""
+    anterior = refs[-2] if len(refs) >= 2 else ""
+    kpis_mes = _kpis_mes(df_recorte, ultimo, anterior)
+
+    desp_ano = _soma_por_tipo(df_recorte, "despesa")
+    rec_ano = _soma_por_tipo(df_recorte, "receita")
+    saldo_ano = rec_ano - desp_ano
+
+    rotulo_ano = (
+        f"no ano {ano}" if ano is not None else "(todo o histórico)"
     )
 
+    # Linha 1: KPIs do mês mais recente
     c1, c2, c3, c4 = st.columns(4)
+    label_mes = ref_para_nome_br(ultimo) or "—"
+    label_ant = ref_para_nome_br(anterior) or "mês anterior"
     _kpi_card(
         c1,
-        f"Total de {kpis['label_ultimo']}",
-        kpis["total_ultimo"] or "R$ 0,00",
-        kpis["delta_anterior"],
+        f"Despesas em {label_mes}",
+        formatar_brl(kpis_mes["desp_atual"]),
+        _formatar_delta(kpis_mes["desp_atual"], kpis_mes["desp_ant"], label_ant),
+        delta_color="inverse",
     )
     _kpi_card(
-        c2, rotulo_periodo, kpis["total_acumulado"] or "R$ 0,00"
+        c2,
+        f"Receitas em {label_mes}",
+        formatar_brl(kpis_mes["rec_atual"]),
+        _formatar_delta(kpis_mes["rec_atual"], kpis_mes["rec_ant"], label_ant),
     )
-    _kpi_card(c3, "Lançamentos no período", kpis["qtde"] or "0")
+    saldo_mes = kpis_mes["rec_atual"] - kpis_mes["desp_atual"]
+    _kpi_card(
+        c3,
+        f"Saldo de {label_mes}",
+        formatar_brl(saldo_mes),
+        delta=("Superávit" if saldo_mes >= 0 else "Déficit"),
+        delta_color="off",
+    )
     _kpi_card(
         c4,
+        "Lançamentos no período",
+        f"{len(df_recorte):,}".replace(",", "."),
+    )
+
+    # Linha 2: KPIs do ano todo
+    c5, c6, c7, c8 = st.columns(4)
+    _kpi_card(c5, f"Despesas {rotulo_ano}", formatar_brl(desp_ano))
+    _kpi_card(c6, f"Receitas {rotulo_ano}", formatar_brl(rec_ano))
+    _kpi_card(
+        c7,
+        f"Saldo {rotulo_ano}",
+        formatar_brl(saldo_ano),
+        delta=("Superávit" if saldo_ano >= 0 else "Déficit"),
+        delta_color="off",
+    )
+    _kpi_card(
+        c8,
         "Cartões / contas distintos",
         f"{df_recorte['conta'].nunique()}",
     )
