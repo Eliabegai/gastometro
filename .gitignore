@@ -10,6 +10,10 @@ __pycache__/
 venv/
 env/
 
+# Banco local + backups (Fase 1 webapp)
+dados/
+saida/_pre_migracao/
+
 # Sistema
 .DS_Store
 Thumbs.db
