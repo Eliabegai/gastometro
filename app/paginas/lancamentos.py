@@ -3,6 +3,10 @@
 Filtros na sidebar (via `sidebar_filtros_lancamentos`): pessoa, conta,
 categoria, tipo, referência mês, data, busca por texto. Mostra
 contagem + soma do recorte e tabela paginada com export pra CSV.
+
+Default: período pré-populado com 1/jan a 31/dez do ano corrente
+(clamp em min/max do banco). Pra ver o histórico inteiro, basta
+expandir o seletor "Período" na sidebar.
 """
 
 from __future__ import annotations
@@ -117,6 +121,15 @@ def render() -> None:
 
     filtros = sidebar_filtros_lancamentos(df)
     sub = aplicar_filtros(df, **filtros)
+
+    if filtros.get("data_inicio") and filtros.get("data_fim"):
+        ini = filtros["data_inicio"]
+        fim = filtros["data_fim"]
+        st.caption(
+            f"Período filtrado: **{ini.strftime('%d/%m/%Y')}** "
+            f"a **{fim.strftime('%d/%m/%Y')}** — ajuste em **Filtros → "
+            f"Período** na sidebar."
+        )
 
     _resumo(sub)
     st.divider()

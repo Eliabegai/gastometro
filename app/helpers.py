@@ -4,6 +4,8 @@
 - Cache da consulta principal (lançamentos) usando `st.cache_data`
   com TTL curto (atualiza ao reimportar via CLI).
 - Filtros canônicos aplicáveis a um DataFrame de lançamentos.
+- Seletor de ano com default = ano corrente (evita exibir agregados
+  do histórico inteiro, que distorcem KPIs).
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ from db.repository import listar_faturas_df, listar_lancamentos_df
 from parsers.base import MES_POR_NUMERO
 
 MES_POR_NOME = {nome: num for num, nome in MES_POR_NUMERO.items()}
+
+OPCAO_TODOS_ANOS = "Todos os anos"
 
 
 def formatar_brl(valor: float | int) -> str:
@@ -110,6 +114,76 @@ def aplicar_filtros(
     return sub
 
 
+def anos_disponiveis(df: pd.DataFrame) -> list[int]:
+    """Anos distintos presentes em `df['data']`, ordenados crescentemente."""
+    if df is None or df.empty or "data" not in df.columns:
+        return []
+    datas = pd.to_datetime(df["data"], errors="coerce").dropna()
+    if datas.empty:
+        return []
+    return sorted({int(d.year) for d in datas})
+
+
+def ano_padrao(anos: list[int]) -> int | None:
+    """Ano sugerido como filtro inicial.
+
+    Regras:
+      - Se o ano corrente está na lista → usa ele.
+      - Senão, usa o maior ano presente (último com dados).
+      - Se a lista está vazia → devolve `None`.
+    """
+    if not anos:
+        return None
+    atual = date.today().year
+    return atual if atual in anos else anos[-1]
+
+
+def selecionar_ano(
+    df: pd.DataFrame,
+    *,
+    label: str = "Ano",
+    key: str = "ano_filtro",
+    permitir_todos: bool = True,
+) -> int | None:
+    """Renderiza selectbox de ano. Devolve o ano selecionado ou `None`
+    (= ver todos os anos).
+
+    Por padrão começa no ano corrente (ou no último ano com dados),
+    evitando que KPIs e gráficos mostrem o acumulado do histórico
+    inteiro logo de cara — o que torna comparações entre meses
+    pouco úteis.
+    """
+    anos = anos_disponiveis(df)
+    if not anos:
+        return None
+
+    padrao = ano_padrao(anos)
+    opcoes_label: list[str] = [str(a) for a in reversed(anos)]
+    if permitir_todos:
+        opcoes_label.append(OPCAO_TODOS_ANOS)
+
+    idx_default = (
+        opcoes_label.index(str(padrao))
+        if padrao is not None and str(padrao) in opcoes_label
+        else 0
+    )
+    escolha = st.selectbox(label, opcoes_label, index=idx_default, key=key)
+    if escolha == OPCAO_TODOS_ANOS:
+        return None
+    try:
+        return int(escolha)
+    except ValueError:
+        return None
+
+
+def filtrar_por_ano(df: pd.DataFrame, ano: int | None) -> pd.DataFrame:
+    """Recorta `df` ao ano informado. `ano=None` → devolve `df` intocado."""
+    if ano is None or df is None or df.empty or "data" not in df.columns:
+        return df
+    datas = pd.to_datetime(df["data"], errors="coerce")
+    return df[datas.dt.year == ano]
+
+
 def referencias_disponiveis(df: pd.DataFrame) -> list[str]:
     """Lista única ordenada de `referencia_mes` (ISO `YYYY-MM`)."""
     if df is None or df.empty:
@@ -162,9 +236,22 @@ def sidebar_filtros_lancamentos(df: pd.DataFrame) -> dict[str, Any]:
     if not df.empty and "data" in df.columns:
         datas = pd.to_datetime(df["data"], errors="coerce").dropna()
         if not datas.empty:
+            min_d = datas.min().date()
+            max_d = datas.max().date()
+            anos = anos_disponiveis(df)
+            ano = ano_padrao(anos)
+            # Default = ano corrente (clamp em min/max disponível) pra
+            # não abrir mostrando o histórico inteiro.
+            if ano is not None:
+                inicio_default = max(date(ano, 1, 1), min_d)
+                fim_default = min(date(ano, 12, 31), max_d)
+            else:
+                inicio_default, fim_default = min_d, max_d
             faixa = st.sidebar.date_input(
                 "Período (data da transação)",
-                value=(datas.min().date(), datas.max().date()),
+                value=(inicio_default, fim_default),
+                min_value=min_d,
+                max_value=max_d,
                 key="f_data",
             )
             if isinstance(faixa, tuple) and len(faixa) == 2:

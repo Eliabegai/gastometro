@@ -97,3 +97,36 @@ def test_pagina_renderiza_com_lancamentos(
     upsert_fatura(fatura, arquivo="sintetico_app.pdf")
 
     _rodar(pagina)
+
+
+def test_filtrar_por_ano() -> None:
+    """`filtrar_por_ano` recorta corretamente pelo ano e respeita None."""
+    from datetime import date
+
+    import pandas as pd
+
+    from app.helpers import filtrar_por_ano
+
+    df = pd.DataFrame(
+        {
+            "data": [date(2024, 1, 1), date(2025, 6, 15), date(2026, 3, 10)],
+            "valor": [100.0, 200.0, 300.0],
+        }
+    )
+    assert len(filtrar_por_ano(df, 2025)) == 1
+    assert len(filtrar_por_ano(df, 2999)) == 0
+    assert len(filtrar_por_ano(df, None)) == 3
+
+
+def test_ano_padrao_prefere_corrente_se_existir() -> None:
+    """`ano_padrao` escolhe o ano corrente quando ele tem dados; senão
+    o último ano disponível."""
+    from datetime import date
+
+    from app.helpers import ano_padrao
+
+    atual = date.today().year
+    assert ano_padrao([atual - 2, atual - 1, atual]) == atual
+    # Quando o ano corrente não está, devolve o último (mais recente).
+    assert ano_padrao([atual - 3, atual - 2]) == atual - 2
+    assert ano_padrao([]) is None

@@ -1,11 +1,13 @@
 """Dashboard — visão geral do gastômetro.
 
 Mostra:
-  - KPIs: total do último mês, vs mês anterior, total acumulado,
+  - Seletor de ano (default = ano corrente; opção 'Todos os anos'
+    disponível pra ver o histórico inteiro quando precisar).
+  - KPIs: total do último mês, vs mês anterior, total do ano filtrado,
     quantidade de lançamentos.
-  - Gráfico de barras: total por mês (cronológico).
+  - Gráfico de barras: total por mês (cronológico) dentro do recorte.
   - Gráfico de pizza: distribuição por categoria (top N + outros).
-  - Tabela: top 10 maiores gastos do período mais recente.
+  - Tabela: top 10 maiores gastos do mês mais recente do recorte.
 
 Quando o banco está vazio, mostra uma chamada pra rodar o CLI.
 """
@@ -19,8 +21,10 @@ import streamlit as st
 from app.helpers import (
     carregar_lancamentos,
     chave_ord_ref_iso,
+    filtrar_por_ano,
     formatar_brl,
     ref_para_nome_br,
+    selecionar_ano,
 )
 
 TOP_CATEGORIAS_GRAFICO = 10
@@ -187,7 +191,21 @@ def render() -> None:
         )
         return
 
-    kpis = _calcular_kpis(df)
+    col_ano, _ = st.columns([1, 5])
+    with col_ano:
+        ano = selecionar_ano(df, key="dashboard_ano")
+
+    df_recorte = filtrar_por_ano(df, ano)
+    if df_recorte.empty:
+        st.info(
+            f"Nenhum lançamento em {ano}. Tente outro ano ou 'Todos os anos'."
+        )
+        return
+
+    kpis = _calcular_kpis(df_recorte)
+    rotulo_periodo = (
+        f"Total do ano {ano}" if ano is not None else "Total (todo o histórico)"
+    )
 
     c1, c2, c3, c4 = st.columns(4)
     _kpi_card(
@@ -197,25 +215,25 @@ def render() -> None:
         kpis["delta_anterior"],
     )
     _kpi_card(
-        c2, "Acumulado (todo o histórico)", kpis["total_acumulado"] or "R$ 0,00"
+        c2, rotulo_periodo, kpis["total_acumulado"] or "R$ 0,00"
     )
-    _kpi_card(c3, "Lançamentos no banco", kpis["qtde"] or "0")
+    _kpi_card(c3, "Lançamentos no período", kpis["qtde"] or "0")
     _kpi_card(
         c4,
         "Cartões / contas distintos",
-        f"{df['conta'].nunique()}",
+        f"{df_recorte['conta'].nunique()}",
     )
 
     st.divider()
 
     col_a, col_b = st.columns([3, 2])
     with col_a:
-        _grafico_barras_mensal(df)
+        _grafico_barras_mensal(df_recorte)
     with col_b:
-        _grafico_pizza_categorias(df)
+        _grafico_pizza_categorias(df_recorte)
 
     st.divider()
-    _maiores_gastos_recentes(df)
+    _maiores_gastos_recentes(df_recorte)
 
 
 render()
