@@ -420,26 +420,60 @@ O comando:
 > gastometro recategorizar   # propaga JSON + dicionario p/ tudo
 > ```
 
+## Interface Web (Streamlit)
+
+A partir da Fase 2 o projeto também tem uma UI Streamlit pra consumir
+os dados do banco SQLite local (mesma fonte que alimenta o Excel).
+
+```bash
+streamlit run app/streamlit_app.py
+# ou, equivalente com porta fixa e sem telemetria:
+streamlit run app/streamlit_app.py --server.port=8501 --browser.gatherUsageStats=false
+```
+
+Páginas disponíveis (sidebar):
+
+- **Dashboard** — KPIs (mês atual vs anterior, acumulado), barras
+  mensais e pie por categoria.
+- **Lançamentos** — tabela completa com filtros por pessoa, conta,
+  categoria, tipo, mês, data e busca por descrição. Export CSV.
+- **Faturas** — uma linha por PDF importado, drill-down nos lançamentos
+  da fatura selecionada.
+- **Categorias** — top "Outros Gastos" com editor de categorias,
+  overrides ativos, override manual e botão de re-categorizar histórico.
+
+A UI sempre lê do banco em `dados/gastometro.db`. Se você ainda não
+populou, rode antes:
+
+```bash
+gastometro                         # processa PDFs em entrada/
+python -m imports.migrar_excel_legado  # importa saida/gastometro.xlsx histórico
+```
+
 ## Estrutura do projeto
 
 ```
 gastometro/
-├── entrada/               # coloque os PDFs aqui (gitignored)
-├── saida/                 # gastometro.xlsx é gerado aqui (gitignored)
-├── extrator.py            # CLI + exportador Excel acumulativo
-├── categorias.py          # regras de categorização
-├── parsers/
-│   ├── __init__.py        # detecção automática do banco
-│   ├── base.py            # tipos compartilhados + utilidades
-│   ├── ailos.py           # parser Ailos Mastercard
-│   ├── nubank.py          # parser Nubank
-│   └── banco_brasil.py    # parser Banco do Brasil (Ourocard)
-├── tests/                 # suite pytest (parse_valor_brl, categorias, inferencia)
-├── pyproject.toml         # config de build + ruff + mypy + pytest
+├── entrada/                       # coloque os PDFs aqui (gitignored)
+├── saida/                         # gastometro.xlsx é gerado aqui (gitignored)
+├── dados/                         # SQLite + backups (gitignored)
+├── extrator.py                    # CLI + orquestra DB + export Excel
+├── categorias.py                  # regras de categorização (fallback)
+├── parsers/                       # parsers por banco (PDF → Fatura)
+├── db/                            # SQLModel + Alembic + repo + backup
+├── imports/                       # ETL legado (Excel → banco)
+├── export/                        # banco → Excel
+├── app/                           # UI Streamlit (Fase 2)
+│   ├── streamlit_app.py           # entrypoint
+│   ├── helpers.py                 # filtros, formato BR, cache
+│   └── paginas/                   # dashboard, lancamentos, faturas, categorias
+├── alembic/                       # migrations versionadas
+├── tests/                         # pytest (parsers, repo, export, app)
+├── pyproject.toml                 # build + ruff + mypy + pytest
 ├── requirements.txt
-├── requirements-dev.txt   # requirements.txt + pytest + ruff + mypy
-├── README.md              # este arquivo
-└── MELHORIAS.md           # backlog vivo de melhorias (priorizado)
+├── requirements-dev.txt           # requirements.txt + pytest + ruff + mypy
+├── README.md                      # este arquivo
+└── MELHORIAS.md                   # backlog vivo de melhorias (priorizado)
 ```
 
 ## Testes, lint e tipos
@@ -450,7 +484,7 @@ O projeto usa `pytest`, `ruff` (lint + imports + upgrades) e `mypy`
 ```bash
 pip install -r requirements-dev.txt   # ou: pip install -e ".[dev]"
 
-python -m pytest                       # 109 testes
+python -m pytest                       # 145 testes (parsers + repo + export + app)
 ruff check .                           # lint
 ruff check . --fix                     # lint com auto-fix
 mypy .                                 # tipos
