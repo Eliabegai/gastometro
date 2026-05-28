@@ -61,6 +61,55 @@ source .venv/bin/activate      # macOS / Linux
 # .venv\Scripts\activate       # Windows PowerShell
 ```
 
+### Ativação automática do `.venv` (opcional)
+
+Pra não precisar rodar `source .venv/bin/activate` toda vez, o projeto
+já vem com um arquivo [`.envrc`](.envrc) versionado pronto pra uso com
+o [direnv](https://direnv.net/) — ferramenta que ativa o venv ao entrar
+na pasta e desativa ao sair, automaticamente.
+
+#### macOS / Linux
+
+```bash
+brew install direnv                       # macOS (Homebrew)
+# sudo apt install direnv                 # Debian / Ubuntu
+# sudo dnf install direnv                 # Fedora
+
+# Plug do shell (escolha o seu)
+echo 'eval "$(direnv hook zsh)"'  >> ~/.zshrc
+# echo 'eval "$(direnv hook bash)"' >> ~/.bashrc
+
+# Reinicie o terminal e autorize o .envrc deste projeto (1x só)
+cd /caminho/para/gastometro
+direnv allow
+```
+
+A partir daí, ao entrar em `gastometro/` o venv ativa sozinho; ao sair,
+desativa. Funciona pra `gastometro`, `pytest`, `ruff`, `mypy` — qualquer
+binário do venv.
+
+#### Windows
+
+`direnv` não tem build oficial pra Windows nativo. Duas alternativas:
+
+**1. Via WSL (Windows Subsystem for Linux) — experiência idêntica à do
+macOS/Linux.** Dentro do WSL, siga o passo a passo acima.
+
+**2. Função no perfil do PowerShell — sem instalar nada extra.** Abra
+o `$PROFILE` (`notepad $PROFILE`; se não existir, o PowerShell cria) e
+adicione:
+
+```powershell
+function gastometro {
+    & "$HOME\Projects\gastometro\.venv\Scripts\gastometro.exe" @args
+}
+```
+
+Recarregue com `. $PROFILE` (ou abra um terminal novo). Agora
+`gastometro …` funciona de qualquer pasta, sem ativar venv. Replique
+o padrão pra `pytest`, `ruff` e `mypy` se quiser o mesmo conforto com
+os comandos de dev.
+
 ### Comandos do CLI
 
 Depois da instalação editável (`pip install -e ".[dev]"`), o comando
