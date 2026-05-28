@@ -1,13 +1,15 @@
 """Página Categorias — overview + edição de overrides + recategorizar.
 
 Funcionalidades:
-  - Lista de categorias existentes com soma acumulada (link mental
-    pro Dashboard / Lançamentos).
+  - Filtro de período (Ano + Visão Ano inteiro/Mensal + Mês) idêntico
+    ao do Dashboard. Todas as tabelas/listas dessa página respeitam
+    o recorte selecionado.
+  - Lista de categorias existentes com soma acumulada no período.
   - Top descrições em 'Outros Gastos' (não categorizadas).
   - Editor de overrides: para cada descrição, escolher categoria;
     salvar grava `OverrideCategoria` no banco.
   - Botão "Recategorizar histórico" — re-aplica overrides + dicionário
-    em todos os lançamentos.
+    em todos os lançamentos (essa ação ignora o filtro, é global).
 
 Quem prefere o fluxo de Excel pode continuar editando a coluna
 `Categoria` no XLSX e rodando `gastometro aprender`.
@@ -18,7 +20,14 @@ from __future__ import annotations
 import streamlit as st
 from sqlmodel import select
 
-from app.helpers import carregar_lancamentos, invalidar_cache
+from app.helpers import (
+    carregar_lancamentos,
+    filtrar_por_ano,
+    invalidar_cache,
+    ref_para_nome_br,
+    selecionar_ano,
+    selecionar_mes,
+)
 from db.engine import get_session
 from db.models import Categoria
 from db.repository import (
@@ -26,6 +35,9 @@ from db.repository import (
     recategorizar_todos,
     salvar_override,
 )
+
+MODO_ANUAL = "Ano inteiro"
+MODO_MENSAL = "Mensal"
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -36,42 +48,89 @@ def _categorias_disponiveis() -> list[str]:
     return sorted(nomes)
 
 
-def _resumo_categorias(df) -> None:
+def _aplicar_filtros(df):
+    """Renderiza os controles de período no topo e devolve `(df_recorte,
+    rotulo_periodo)`.
+
+    Mesma UX do Dashboard: Ano (selectbox) + Visão (Ano inteiro × Mensal,
+    radio) + Mês (selectbox, só no modo mensal).
+    """
+    col_ano, col_modo, col_mes = st.columns([1, 1, 1])
+    with col_ano:
+        ano = selecionar_ano(df, key="categorias_ano")
+
+    df_recorte = filtrar_por_ano(df, ano)
+
+    with col_modo:
+        modo = st.radio(
+            "Visão",
+            [MODO_ANUAL, MODO_MENSAL],
+            index=0,
+            horizontal=True,
+            key="categorias_modo",
+        )
+
+    ref_selecionada: str | None = None
+    if modo == MODO_MENSAL:
+        with col_mes:
+            ref_selecionada = selecionar_mes(df_recorte, key="categorias_mes")
+
+    rotulo = (
+        f"em {ano}" if ano is not None else "no histórico inteiro"
+    )
+    if modo == MODO_MENSAL and ref_selecionada:
+        df_recorte = df_recorte[df_recorte["referencia_mes"] == ref_selecionada]
+        rotulo = f"em {ref_para_nome_br(ref_selecionada)}"
+
+    return df_recorte, rotulo
+
+
+def _resumo_categorias(df, rotulo_periodo: str) -> None:
     if df.empty:
         return
     agg = (
-        df[df["valor"] > 0]
+        df[df["tipo"] == "despesa"]
         .groupby("categoria")["valor"]
-        .agg(["sum", "count"])
+        .agg(soma="sum", qtde="count")
         .reset_index()
-        .sort_values("sum", ascending=False)
     )
+    if agg.empty:
+        st.info(f"Nenhuma despesa {rotulo_periodo}.")
+        return
+    agg["ticket_medio"] = agg["soma"] / agg["qtde"]
+    agg = agg.sort_values("soma", ascending=False)
     agg = agg.rename(
         columns={
             "categoria": "Categoria",
-            "sum": "Total acumulado (R$)",
-            "count": "Qtde. lançamentos",
+            "soma": "Total (R$)",
+            "qtde": "Lançamentos",
+            "ticket_medio": "Ticket médio (R$)",
         }
     )
-    st.subheader("Categorias por gasto acumulado")
+    st.subheader(f"Categorias por gasto {rotulo_periodo}")
     st.dataframe(
         agg,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Total acumulado (R$)": st.column_config.NumberColumn(
+            "Total (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Ticket médio (R$)": st.column_config.NumberColumn(
                 format="R$ %.2f"
             ),
+            "Lançamentos": st.column_config.NumberColumn(format="%d"),
         },
     )
 
 
-def _top_outros_gastos(df, top_n: int = 30) -> None:
+def _top_outros_gastos(
+    df, rotulo_periodo: str, top_n: int = 30
+) -> None:
     """Top descrições caídas em `Outros Gastos`. Editor rápido pra categorizar."""
-    sub = df[(df["categoria"] == "Outros Gastos") & (df["valor"] > 0)]
+    sub = df[(df["categoria"] == "Outros Gastos") & (df["tipo"] == "despesa")]
     if sub.empty:
         st.info(
-            "Nenhuma descrição em 'Outros Gastos' (todas estão categorizadas)."
+            f"Nenhuma descrição em 'Outros Gastos' {rotulo_periodo} "
+            "(todas categorizadas ou nada no recorte)."
         )
         return
 
@@ -84,7 +143,9 @@ def _top_outros_gastos(df, top_n: int = 30) -> None:
     )
 
     categorias = _categorias_disponiveis()
-    st.subheader(f"Top {len(agg)} 'Outros Gastos' (categorize rápido)")
+    st.subheader(
+        f"Top {len(agg)} 'Outros Gastos' {rotulo_periodo} (categorize rápido)"
+    )
     st.caption(
         "Escolha a categoria certa e clique em **Salvar overrides** abaixo. "
         "A re-categorização do histórico roda ao final."
@@ -209,12 +270,32 @@ def render() -> None:
         )
         return
 
-    _resumo_categorias(df)
+    df_recorte, rotulo_periodo = _aplicar_filtros(df)
+    if df_recorte.empty:
+        st.info(
+            f"Nenhum lançamento {rotulo_periodo}. Ajuste o filtro pra ver "
+            "as categorias."
+        )
+        st.divider()
+        # Mesmo sem dados no recorte, mostramos overrides/recategorizar
+        # — são ações globais, não dependem do período.
+        tabs = st.tabs(["Overrides ativos", "Adicionar manual", "Re-categorizar"])
+        with tabs[0]:
+            _overrides_existentes()
+        with tabs[1]:
+            _adicionar_manual()
+        with tabs[2]:
+            _botao_recategorizar()
+        return
+
+    _resumo_categorias(df_recorte, rotulo_periodo)
     st.divider()
 
-    tabs = st.tabs(["Outros Gastos", "Overrides ativos", "Adicionar manual", "Re-categorizar"])
+    tabs = st.tabs(
+        ["Outros Gastos", "Overrides ativos", "Adicionar manual", "Re-categorizar"]
+    )
     with tabs[0]:
-        _top_outros_gastos(df)
+        _top_outros_gastos(df_recorte, rotulo_periodo)
     with tabs[1]:
         _overrides_existentes()
     with tabs[2]:

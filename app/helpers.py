@@ -184,6 +184,32 @@ def filtrar_por_ano(df: pd.DataFrame, ano: int | None) -> pd.DataFrame:
     return df[datas.dt.year == ano]
 
 
+def referencias_no_recorte(df: pd.DataFrame) -> list[str]:
+    """Lista ordenada de `referencia_mes` (ISO `YYYY-MM`) presentes em `df`."""
+    return referencias_disponiveis(df)
+
+
+def selecionar_mes(
+    df: pd.DataFrame,
+    *,
+    label: str = "Mês",
+    key: str = "mes_filtro",
+) -> str | None:
+    """Selectbox de referência mensal (ISO `YYYY-MM`) com label PT-BR.
+
+    Default = último mês com dados no recorte. Devolve a referência ISO
+    selecionada ou `None` se o recorte está vazio.
+    """
+    refs = referencias_no_recorte(df)
+    if not refs:
+        return None
+    opcoes_iso = list(reversed(refs))
+    label_to_iso = {ref_para_nome_br(r): r for r in opcoes_iso}
+    rotulos = list(label_to_iso.keys())
+    escolha = st.selectbox(label, rotulos, index=0, key=key)
+    return label_to_iso.get(escolha)
+
+
 def referencias_disponiveis(df: pd.DataFrame) -> list[str]:
     """Lista única ordenada de `referencia_mes` (ISO `YYYY-MM`)."""
     if df is None or df.empty:

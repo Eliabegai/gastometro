@@ -60,6 +60,11 @@ def main() -> None:
             title="Categorias",
             icon=":material/sell:",
         ),
+        st.Page(
+            str(PAGINAS / "importar.py"),
+            title="Importar",
+            icon=":material/upload_file:",
+        ),
     ]
 
     nav = st.navigation(paginas, position="sidebar")

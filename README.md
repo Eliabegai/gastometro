@@ -433,14 +433,38 @@ streamlit run app/streamlit_app.py --server.port=8501 --browser.gatherUsageStats
 
 Páginas disponíveis (sidebar):
 
-- **Dashboard** — KPIs (mês atual vs anterior, acumulado), barras
-  mensais e pie por categoria.
+- **Dashboard** — toggle **Ano inteiro × Mensal** no topo. No modo
+  anual, KPIs (Despesas, Receitas, Saldo, Qtde) do ano selecionado +
+  pie e top 10 do ano todo. No modo mensal, escolhe o mês e os KPIs
+  passam a mostrar despesas/receitas do mês com delta vs mês anterior;
+  o pie e top 10 também recortam pro mês selecionado. As barras
+  mensais sempre mostram o ano inteiro pra dar contexto (mês
+  selecionado fica em destaque visual). **Clicar numa barra** muda
+  pro modo Mensal já com o mês clicado selecionado — atalho rápido
+  pra fazer drill-down. O **Top 10** lista as maiores **categorias**
+  (soma + quantidade + ticket médio), não lançamentos individuais —
+  evita que uma categoria com muitas compras (ex.: Mercado) seja
+  subestimada na visão.
 - **Lançamentos** — tabela completa com filtros por pessoa, conta,
   categoria, tipo, mês, data e busca por descrição. Export CSV.
 - **Faturas** — uma linha por PDF importado, drill-down nos lançamentos
   da fatura selecionada.
-- **Categorias** — top "Outros Gastos" com editor de categorias,
-  overrides ativos, override manual e botão de re-categorizar histórico.
+- **Categorias** — mesmo toggle **Ano × Mensal** do Dashboard,
+  filtrando o resumo de categorias e o top "Outros Gastos" pelo
+  período escolhido. Inclui editor de categorias, overrides ativos,
+  override manual e botão de re-categorizar histórico (essa última
+  ação é global, ignora o filtro).
+- **Importar** — dois blocos:
+  1. **PDFs de fatura**: uploader pra enviar um ou mais PDFs (mesma
+     lógica do CLI `gastometro`). Checkboxes pra arquivar em
+     `entrada/` e regenerar o Excel.
+  2. **Planilha familiar (Google Sheets)**: cola a URL pública da
+     planilha uma vez (Compartilhar → "Qualquer pessoa com o link
+     pode ver") e dali pra frente é um clique no botão
+     **🔄 Atualizar do Google Sheets** — baixa o XLSX e roda o
+     importador idempotente.
+  O bloco de PDFs também aparece num expander no topo da página
+  **Faturas**.
 
 A UI sempre lê do banco em `dados/gastometro.db`. Se você ainda não
 populou, rode antes:
@@ -483,6 +507,57 @@ Regras aplicadas durante o import:
 Pra incluir uma linha nova da planilha, edite o dicionário `CONFIG`
 em `imports/importar_planilha_familiar.py`.
 
+## Sincronização com Google Sheets
+
+Pra continuar atualizando a planilha familiar no Google Sheets e
+puxar pro banco com um clique:
+
+1. No Google Sheets, abra a planilha → **Compartilhar** → mude o
+   acesso pra "Qualquer pessoa com o link" (pode ser só
+   visualização — não precisa de edição).
+2. Copie a URL da barra de endereços (qualquer formato funciona —
+   o script extrai o ID automaticamente).
+3. Cole a URL no campo da página **Importar** (Streamlit) e
+   clique em **🔄 Atualizar do Google Sheets**. A URL fica salva
+   em `dados/planilha_url.txt` (gitignored) — nas próximas vezes
+   é só clicar no botão.
+
+Ou via CLI:
+
+```bash
+# 1ª vez (informa a URL — fica salva):
+python -m imports.baixar_planilha_familiar "https://docs.google.com/spreadsheets/d/.../edit"
+
+# Próximas vezes:
+python -m imports.baixar_planilha_familiar
+python -m imports.importar_planilha_familiar dados/planilha_familiar_baixada.xlsx
+```
+
+Alternativa via env var: defina `GASTOMETRO_PLANILHA_URL` no `.envrc`
+(direnv) ou `.env` e o script lê automaticamente.
+
+Como o importador é **idempotente** (hash determinístico por
+descrição+ano+mês+pessoa), você pode re-baixar quantas vezes quiser —
+só os valores novos/alterados entram. Linhas duplicadas viram
+"skip" silencioso.
+
+## Consolidar contas duplicadas
+
+Se você vier de uma versão antiga do projeto, talvez tenha no banco
+duplicatas tipo `Ailos Mastercard` (do seed antigo) **e** `Ailos —
+Eliabe Gai` (criada pelos parsers de PDF) — apontando pro mesmo
+cartão. O comando abaixo funde tudo no nome canônico (`{Banco} —
+{Titular}`), preservando os lançamentos da conta antiga:
+
+```bash
+python -m db.consolidar_contas
+```
+
+É idempotente — rodar várias vezes não muda nada depois da primeira
+execução. O `seed_inicial` já foi atualizado pra criar as contas
+diretamente no formato canônico, então **bancos novos não precisam
+desse passo**.
+
 ## Estrutura do projeto
 
 ```
@@ -517,7 +592,7 @@ O projeto usa `pytest`, `ruff` (lint + imports + upgrades) e `mypy`
 ```bash
 pip install -r requirements-dev.txt   # ou: pip install -e ".[dev]"
 
-python -m pytest                       # 153 testes (parsers + repo + export + app + planilha)
+python -m pytest                       # 182 testes (parsers + repo + export + app + planilha + consolidação + upload + sync)
 ruff check .                           # lint
 ruff check . --fix                     # lint com auto-fix
 mypy .                                 # tipos

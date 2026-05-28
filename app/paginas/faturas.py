@@ -16,6 +16,7 @@ from app.helpers import (
     formatar_brl,
     ref_para_nome_br,
 )
+from app.paginas._importar_pdfs import render_uploader
 
 
 def _tabela_faturas(df) -> None:
@@ -152,11 +153,14 @@ def _drill_down(df_faturas, df_lanc) -> None:
 def render() -> None:
     st.title("Faturas")
 
+    with st.expander("📥 Importar nova fatura (PDF)", expanded=False):
+        render_uploader(key_prefix="pagina_faturas")
+
     df_fat = carregar_faturas()
     if df_fat is None or df_fat.empty:
         st.info(
-            "Nenhuma fatura no banco ainda. Rode `gastometro` (PDFs em "
-            "`entrada/`) ou `python -m imports.migrar_excel_legado`."
+            "Nenhuma fatura no banco ainda. Use o uploader acima ou rode "
+            "`gastometro` no terminal (PDFs em `entrada/`)."
         )
         return
 

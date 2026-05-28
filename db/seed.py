@@ -43,15 +43,23 @@ CATEGORIAS_RECEITA_PADRAO = [
 # garantimos que ela exista no banco.
 CATEGORIA_FALLBACK_DESPESA = "Outros Gastos"
 
-# Pessoas iniciais do casal. Pode editar depois pela UI.
-PESSOAS_INICIAIS = ["Eliabe", "Ana Letícia"]
+# Pessoas iniciais do casal. Mantemos o **nome completo** (canônico)
+# que os PDFs detectam — assim o seed não diverge do que o parser cria.
+PESSOAS_INICIAIS = ["Eliabe Gai", "Ana Leticia Silva Maciel"]
 
 # Contas iniciais. `pessoa_nome=None` => conjunta (sem dono específico).
+# Formato canônico dos cartões: `{Banco} — {Titular}` (mesma regra de
+# `_identificador_cartao` em `db/repository.py`). Manter aqui evita
+# duplicação tipo "Ailos Mastercard" vs "Ailos — Eliabe Gai".
 CONTAS_INICIAIS = [
     # nome, tipo, pessoa_nome
-    ("Ailos Mastercard", TIPO_CONTA_CARTAO, "Eliabe"),
-    ("Nubank Eliabe", TIPO_CONTA_CARTAO, "Eliabe"),
-    ("Nubank Ana", TIPO_CONTA_CARTAO, "Ana Letícia"),
+    ("Ailos — Eliabe Gai", TIPO_CONTA_CARTAO, "Eliabe Gai"),
+    ("Nubank — Eliabe Gai", TIPO_CONTA_CARTAO, "Eliabe Gai"),
+    (
+        "Nubank — Ana Leticia Silva Maciel",
+        TIPO_CONTA_CARTAO,
+        "Ana Leticia Silva Maciel",
+    ),
     ("Conta Corrente", TIPO_CONTA_CORRENTE, None),
     ("Planilha Familiar", TIPO_CONTA_CORRENTE, None),
 ]
