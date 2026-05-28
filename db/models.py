@@ -17,10 +17,16 @@ basta acrescentar à constante; o banco aceita strings arbitrárias.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlmodel import Field, SQLModel
+
+
+def _agora_utc() -> datetime:
+    """Substitui `datetime.utcnow()` (deprecado em 3.12+). Usa
+    `timezone.utc` em vez de `datetime.UTC` por compat com Python 3.10."""
+    return datetime.now(timezone.utc)
 
 TIPO_CONTA_CARTAO = "cartao_credito"
 TIPO_CONTA_CORRENTE = "conta_corrente"
@@ -129,7 +135,7 @@ class Fatura(SQLModel, table=True):
         default=None, max_digits=12, decimal_places=2
     )
     qtde_transacoes: int = Field(default=0)
-    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    criado_em: datetime = Field(default_factory=_agora_utc)
 
 
 class Lancamento(SQLModel, table=True):
@@ -180,8 +186,8 @@ class Lancamento(SQLModel, table=True):
     hash_dedupe: str = Field(unique=True, index=True)
     observacao: str | None = Field(default=None)
 
-    criado_em: datetime = Field(default_factory=datetime.utcnow)
-    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    criado_em: datetime = Field(default_factory=_agora_utc)
+    atualizado_em: datetime = Field(default_factory=_agora_utc)
 
 
 class OverrideCategoria(SQLModel, table=True):
@@ -197,4 +203,4 @@ class OverrideCategoria(SQLModel, table=True):
 
     descricao_normalizada: str = Field(primary_key=True)
     categoria_id: int = Field(foreign_key="categoria.id", index=True)
-    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    criado_em: datetime = Field(default_factory=_agora_utc)

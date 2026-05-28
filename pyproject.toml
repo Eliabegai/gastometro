@@ -76,6 +76,10 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_optional = true
 check_untyped_defs = true
+# Arquivos gerados pelo Alembic (alembic/versions/*) usam
+# `sqlmodel.sql.sqltypes.AutoString()` que mypy nao resolve. Saem do
+# check; sao revisados visualmente quando criados.
+exclude = ['alembic/versions/']
 
 [[tool.mypy.overrides]]
 module = "tests.*"

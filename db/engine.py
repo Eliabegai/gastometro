@@ -103,8 +103,9 @@ def garantir_schema() -> None:
     precisar lembrar de comandos extras. Em produção/CI, prefira o
     comando explícito (`alembic upgrade head`).
     """
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     cfg = Config(str(RAIZ / "alembic.ini"))
     cfg.set_main_option("script_location", str(RAIZ / "alembic"))
