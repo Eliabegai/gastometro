@@ -1,0 +1,228 @@
+"""Testes do `db.repository`: upsert, idempotência, dedup, override.
+
+Usam a fixture `banco_temporario` (em `conftest.py`) que aponta o
+SQLite pra um arquivo temporário por teste, isolando totalmente do
+banco real do usuário.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from parsers.base import Fatura, FaturaMetadata, Transacao
+
+
+def _fatura_demo(arquivo: str = "Fatura_Demo.pdf") -> Fatura:
+    """Fatura sintética com 3 lançamentos cobrindo casos relevantes."""
+    return Fatura(
+        metadata=FaturaMetadata(
+            banco="Demo",
+            titular="Joao Silva",
+            referencia_mes="Maio/2026",
+            data_fechamento="05/05/2026",
+            data_vencimento="12/05/2026",
+            valor_total=350.0,
+        ),
+        transacoes=[
+            Transacao(
+                data="01/05/2026",
+                descricao="POSTO SHELL",
+                parcela="",
+                cidade="Sao Paulo",
+                valor=200.0,
+                categoria="",
+            ),
+            Transacao(
+                data="02/05/2026",
+                descricao="LOJA PARCELADA",
+                parcela="02/12",
+                cidade="Sao Paulo",
+                valor=100.0,
+                categoria="",
+            ),
+            Transacao(
+                data="03/05/2026",
+                descricao="ESTORNO DEVOLUCAO",
+                parcela="",
+                cidade="Sao Paulo",
+                valor=-50.0,
+                categoria="",
+            ),
+        ],
+    )
+
+
+def test_upsert_fatura_grava_3_lancamentos(banco_temporario):
+    """Upsert de uma fatura grava todos os lançamentos + cria conta/pessoa."""
+    from db.repository import (
+        listar_faturas_df,
+        listar_lancamentos_df,
+        upsert_fatura,
+    )
+
+    fat_id, inseridos = upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+    assert fat_id is not None
+    assert inseridos == 3
+
+    df_lanc = listar_lancamentos_df()
+    df_fat = listar_faturas_df()
+
+    assert len(df_fat) == 1
+    assert len(df_lanc) == 3
+    assert df_fat["arquivo"].iloc[0] == "Fatura_Demo.pdf"
+    assert df_fat["conta"].iloc[0] == "Demo — Joao Silva"
+    assert df_fat["pessoa"].iloc[0] == "Joao Silva"
+    assert df_fat["referencia_mes"].iloc[0] == "2026-05"
+
+
+def test_upsert_fatura_idempotente(banco_temporario):
+    """Re-import da mesma fatura não duplica nada (re-run safe)."""
+    from db.repository import (
+        listar_faturas_df,
+        listar_lancamentos_df,
+        upsert_fatura,
+    )
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+    fat_id2, inseridos2 = upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+
+    assert inseridos2 == 0
+    assert fat_id2 is not None
+    assert len(listar_faturas_df()) == 1
+    assert len(listar_lancamentos_df()) == 3
+
+
+def test_hash_dedupe_diferencia_parcelas(banco_temporario):
+    """Mesma desc+valor em parcelas distintas (1/12 vs 2/12) não colapsam."""
+    from db.repository import listar_lancamentos_df, upsert_fatura
+
+    fatura = Fatura(
+        metadata=FaturaMetadata(
+            banco="Demo",
+            titular="Maria",
+            referencia_mes="Maio/2026",
+            data_vencimento="12/05/2026",
+            valor_total=300.0,
+        ),
+        transacoes=[
+            Transacao(
+                data="01/05/2026",
+                descricao="CURSO ALURA",
+                parcela="01/12",
+                cidade="",
+                valor=100.0,
+            ),
+            Transacao(
+                data="01/05/2026",
+                descricao="CURSO ALURA",
+                parcela="02/12",
+                cidade="",
+                valor=100.0,
+            ),
+            Transacao(
+                data="01/05/2026",
+                descricao="CURSO ALURA",
+                parcela="03/12",
+                cidade="",
+                valor=100.0,
+            ),
+        ],
+    )
+
+    _, inseridos = upsert_fatura(fatura, arquivo="Parcelas.pdf")
+    assert inseridos == 3
+    df = listar_lancamentos_df()
+    assert df["parcela"].tolist() == ["01/12", "02/12", "03/12"]
+
+
+def test_estorno_grava_valor_positivo_mas_volta_negativo_no_df(banco_temporario):
+    """Estornos: armazenados com valor abs; saem com sinal `-` em listar_*."""
+    from db.repository import listar_lancamentos_df, upsert_fatura
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+
+    df = listar_lancamentos_df(sinal_estorno_negativo=True)
+    estornos = df[df["tipo"] == "estorno"]
+    assert len(estornos) == 1
+    assert estornos["valor"].iloc[0] == -50.0
+
+    df_bruto = listar_lancamentos_df(sinal_estorno_negativo=False)
+    estornos_bruto = df_bruto[df_bruto["tipo"] == "estorno"]
+    assert estornos_bruto["valor"].iloc[0] == 50.0
+
+
+def test_override_categoria_tem_precedencia(banco_temporario):
+    """Override salvo prevalece sobre dicionário em novos lançamentos."""
+    from db.repository import (
+        listar_lancamentos_df,
+        salvar_override,
+        upsert_fatura,
+    )
+
+    salvar_override("POSTO SHELL", "Transporte")
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+    df = listar_lancamentos_df()
+    linha_shell = df[df["descricao"] == "POSTO SHELL"]
+    assert linha_shell["categoria"].iloc[0] == "Transporte"
+
+
+def test_recategorizar_aplica_overrides_no_historico(banco_temporario):
+    """`recategorizar_todos()` atualiza lançamentos já gravados."""
+    from db.repository import (
+        listar_lancamentos_df,
+        recategorizar_todos,
+        salvar_override,
+        upsert_fatura,
+    )
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+    df_antes = listar_lancamentos_df()
+    cat_inicial_shell = df_antes[df_antes["descricao"] == "POSTO SHELL"][
+        "categoria"
+    ].iloc[0]
+    assert cat_inicial_shell == "Combustível"
+
+    salvar_override("POSTO SHELL", "Transporte")
+
+    resultado = recategorizar_todos()
+    assert resultado["mudados"] >= 1
+
+    df_depois = listar_lancamentos_df()
+    cat_final_shell = df_depois[df_depois["descricao"] == "POSTO SHELL"][
+        "categoria"
+    ].iloc[0]
+    assert cat_final_shell == "Transporte"
+
+
+def test_respeitar_categoria_existente_pula_categorizador(banco_temporario):
+    """Migração legado: usa `tx.categoria` em vez de re-categorizar."""
+    from db.repository import listar_lancamentos_df, upsert_fatura
+
+    fatura = _fatura_demo()
+    fatura.transacoes[0].categoria = "Categoria Manual Exotica"
+
+    upsert_fatura(
+        fatura,
+        arquivo="Fatura_Demo.pdf",
+        respeitar_categoria_existente=True,
+    )
+    df = linha = listar_lancamentos_df()
+    linha = df[df["descricao"] == "POSTO SHELL"]
+    assert linha["categoria"].iloc[0] == "Categoria Manual Exotica"
+
+
+@pytest.mark.parametrize(
+    "iso,esperado",
+    [
+        ("Maio/2026", "2026-05"),
+        ("Janeiro/2024", "2024-01"),
+        ("Dezembro/2025", "2025-12"),
+        ("", None),
+        ("formato-errado", None),
+    ],
+)
+def test_parse_referencia_iso(iso, esperado):
+    from db.repository import parse_referencia
+
+    assert parse_referencia(iso) == esperado
