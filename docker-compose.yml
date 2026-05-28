@@ -38,6 +38,14 @@ services:
       # URL salva da planilha familiar (Google Sheets). Opcional —
       # pode ser também colada na UI (fica em /data/planilha_url.txt).
       GASTOMETRO_PLANILHA_URL: ${GASTOMETRO_PLANILHA_URL:-}
+      # XSRF/CORS do Streamlit precisam ficar **off** quando o app está
+      # atrás de um proxy/túnel (ngrok, Cloudflare Tunnel, Tailscale
+      # Funnel) — senão o `st.file_uploader` da página Importar quebra
+      # com erro de Axios e os websockets reconectam em loop. Default
+      # `true` (seguro p/ uso local); o `.env` ativa ngrok setando
+      # `STREAMLIT_ENABLE_XSRF=false`.
+      STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION: ${STREAMLIT_ENABLE_XSRF:-true}
+      STREAMLIT_SERVER_ENABLE_CORS: ${STREAMLIT_ENABLE_CORS:-true}
     volumes:
       # Banco + backups + cache da URL da planilha.
       - ./dados:/data
@@ -51,6 +59,44 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────
+  # ngrok — túnel público pra acessar o app fora da LAN (celular no
+  # 4G, outra cidade, demo p/ alguém). Ativa só quando o profile
+  # `ngrok` é passado, então quem só usa local não precisa de token:
+  #
+  #   docker compose --profile ngrok up -d
+  #
+  # Pré-requisitos no `.env` (na raiz do projeto):
+  #   NGROK_AUTHTOKEN=...          # https://dashboard.ngrok.com/get-started/your-authtoken
+  #   NGROK_DOMAIN=seu-app.ngrok-free.app   # domínio estático grátis
+  #   STREAMLIT_ENABLE_XSRF=false  # libera upload de PDFs via túnel
+  #   STREAMLIT_ENABLE_CORS=false  # libera websocket via túnel
+  #
+  # Painel local: http://localhost:4040 (inspeciona requisições em
+  # tempo real, útil pra debug). URL pública: o domínio configurado.
+  # ─────────────────────────────────────────────────────────────────
+  ngrok:
+    image: ngrok/ngrok:3
+    container_name: gastometro-ngrok
+    restart: unless-stopped
+    profiles: ["ngrok"]
+    depends_on:
+      gastometro:
+        condition: service_healthy
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    # `--url=` fixa o domínio estático (plano Free: 1 grátis).
+    # Sem `NGROK_DOMAIN`, ngrok cai pro modo URL aleatória (troca a
+    # cada subida) — útil pra testar antes de reservar domínio.
+    command: >
+      http
+      ${NGROK_DOMAIN:+--url=${NGROK_DOMAIN}}
+      gastometro:8501
+    ports:
+      # Painel web local do ngrok (inspector). Não exposto na LAN
+      # — só `127.0.0.1` pra evitar curiosos na rede.
+      - "127.0.0.1:4040:4040"
 
   # ─────────────────────────────────────────────────────────────────
   # Litestream (opcional) — replicação contínua do SQLite pra S3/B2.

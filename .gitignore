@@ -33,3 +33,9 @@ Thumbs.db
 
 # Overrides de categorização (podem conter descrições com dados sensíveis)
 categorias_usuario.json
+
+# Variáveis de ambiente (tokens ngrok, URLs privadas).
+# `.env.example` é commitado como template.
+.env
+.env.local
+!.env.example

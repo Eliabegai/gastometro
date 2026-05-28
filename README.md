@@ -638,6 +638,94 @@ instruções inline. Aí restaurar em outro PC é um comando:
 litestream restore -o dados/gastometro.db s3://meu-bucket/gastometro.db
 ```
 
+### Expor o app pra fora da LAN (ngrok)
+
+Quando você quer ver os dados do celular no 4G, mostrar pra alguém
+fora de casa ou simplesmente acessar de outra cidade, dá pra
+tunelar via [ngrok](https://ngrok.com/) sem mexer no roteador. O
+service já está no `docker-compose.yml` atrás do **profile
+`ngrok`** — só sobe quando você pede explicitamente, então quem só
+roda local não precisa de token.
+
+**Setup (uma vez):**
+
+1. Crie conta grátis em <https://ngrok.com> (login com GitHub/Google).
+2. Pegue seu authtoken em
+   <https://dashboard.ngrok.com/get-started/your-authtoken>.
+3. (Opcional, recomendado) Reserve um domínio estático grátis em
+   <https://dashboard.ngrok.com/domains> — ex.: `gastometro.ngrok-free.app`.
+   Sem isso, a URL muda toda vez que o container reinicia.
+4. Copie `.env.example` pra `.env` e preencha:
+
+   ```bash
+   NGROK_AUTHTOKEN=2abc...XYZ
+   NGROK_DOMAIN=gastometro.ngrok-free.app
+   STREAMLIT_ENABLE_XSRF=false
+   STREAMLIT_ENABLE_CORS=false
+   ```
+
+   > **Por que desligar XSRF/CORS?** O Streamlit checa o `Host`
+   > header em uploads e websockets pra mitigar CSRF. Atrás de
+   > proxy, esse header vem do túnel (não do `localhost`), então a
+   > checagem falha — uploads quebram com erro de Axios e o
+   > websocket reconecta em loop. Desabilitar é seguro porque o
+   > acesso público fica protegido pelo próprio domínio único do
+   > ngrok (URL não-adivinhável); pra camadas extras, configure
+   > [Basic Auth no ngrok](https://ngrok.com/docs/http/traffic-policy/actions/basic-auth/)
+   > ou [OAuth](https://ngrok.com/docs/http/oauth/) no painel.
+
+5. Suba com o profile ativo:
+
+   ```bash
+   docker compose --profile ngrok up -d
+   ```
+
+6. Acesse:
+   - **URL pública**: `https://gastometro.ngrok-free.app`
+     (ou a URL aleatória que aparece no `docker compose logs ngrok`
+     se você não reservou domínio).
+   - **Painel local do ngrok**: <http://localhost:4040> — inspetor
+     de requests em tempo real, ótimo pra debug.
+
+**Comandos do dia a dia:**
+
+```bash
+# Subir app + túnel (1ª vez ou após mexer no docker-compose.yml):
+docker compose --profile ngrok up -d --build
+
+# Subir só o túnel (app já rodando):
+docker compose --profile ngrok up -d ngrok
+
+# Ver a URL pública (e confirmar que o domínio bateu):
+docker compose logs ngrok | grep -E "(started tunnel|url=)"
+#   ex.: started tunnel … url=https://gastometro.ngrok-free.app
+
+# Acompanhar logs ao vivo (Ctrl+C pra sair):
+docker compose logs -f ngrok
+
+# Status / saúde dos dois containers:
+docker compose --profile ngrok ps
+
+# Reiniciar só o túnel (após trocar NGROK_DOMAIN no .env, por ex.):
+docker compose --profile ngrok up -d --force-recreate ngrok
+
+# Pausar o túnel sem derrubar o app:
+docker compose stop ngrok
+
+# Religar o túnel pausado:
+docker compose start ngrok
+
+# Voltar a só rodar local (remove o container do ngrok de vez):
+docker compose --profile ngrok rm -sf ngrok
+
+# Derrubar tudo (app + túnel) preservando dados:
+docker compose --profile ngrok down
+```
+
+> Sempre que mexer no `.env` (token, domínio, flags do Streamlit) é
+> preciso `--force-recreate` (ou `down` + `up`) — `restart` sozinho
+> não relê o `.env`.
+
 ## Mudar de PC / sincronizar 2 PCs
 
 Três abordagens, do melhor pro mais simples — escolha conforme a
