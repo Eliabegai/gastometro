@@ -20,6 +20,15 @@ from __future__ import annotations
 import streamlit as st
 from sqlmodel import select
 
+from app.estado import (
+    CHAVE_MES,
+    CHAVE_MODO,
+    CHAVES_GLOBAIS,
+    MAPA_GLOBAIS,
+    botao_limpar_filtros,
+    hidratar_globais,
+    persistir_globais,
+)
 from app.helpers import (
     carregar_lancamentos,
     filtrar_por_ano,
@@ -52,12 +61,13 @@ def _aplicar_filtros(df):
     """Renderiza os controles de período no topo e devolve `(df_recorte,
     rotulo_periodo)`.
 
-    Mesma UX do Dashboard: Ano (selectbox) + Visão (Ano inteiro × Mensal,
-    radio) + Mês (selectbox, só no modo mensal).
+    Compartilha as **mesmas chaves globais** do Dashboard (`CHAVE_ANO`,
+    `CHAVE_MES`, `CHAVE_MODO` em `app.estado`) — alterações aqui
+    refletem lá e vice-versa.
     """
-    col_ano, col_modo, col_mes = st.columns([1, 1, 1])
+    col_ano, col_modo, col_mes, col_limpar = st.columns([1, 1, 1, 0.7])
     with col_ano:
-        ano = selecionar_ano(df, key="categorias_ano")
+        ano = selecionar_ano(df)
 
     df_recorte = filtrar_por_ano(df, ano)
 
@@ -67,13 +77,23 @@ def _aplicar_filtros(df):
             [MODO_ANUAL, MODO_MENSAL],
             index=0,
             horizontal=True,
-            key="categorias_modo",
+            key=CHAVE_MODO,
         )
 
     ref_selecionada: str | None = None
     if modo == MODO_MENSAL:
         with col_mes:
-            ref_selecionada = selecionar_mes(df_recorte, key="categorias_mes")
+            ref_selecionada = selecionar_mes(df_recorte)
+
+    with col_limpar:
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        if botao_limpar_filtros(
+            CHAVES_GLOBAIS + (f"{CHAVE_MES}__widget",),
+            MAPA_GLOBAIS.values(),
+            key="btn_limpar_categorias",
+            rotulo_auxiliar="Volta ao ano corrente, visão anual",
+        ):
+            st.rerun()
 
     rotulo = (
         f"em {ano}" if ano is not None else "no histórico inteiro"
@@ -262,6 +282,9 @@ def _botao_recategorizar() -> None:
 def render() -> None:
     st.title("Categorias")
 
+    # Hidrata filtros globais a partir da URL (compartilhados com Dashboard).
+    hidratar_globais()
+
     df = carregar_lancamentos()
     if df is None or df.empty:
         st.info(
@@ -286,6 +309,7 @@ def render() -> None:
             _adicionar_manual()
         with tabs[2]:
             _botao_recategorizar()
+        persistir_globais()
         return
 
     _resumo_categorias(df_recorte, rotulo_periodo)
@@ -302,6 +326,8 @@ def render() -> None:
         _adicionar_manual()
     with tabs[3]:
         _botao_recategorizar()
+
+    persistir_globais()
 
 
 render()

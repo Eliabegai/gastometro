@@ -26,6 +26,16 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from app.estado import (
+    CHAVE_ANO,
+    CHAVE_MES,
+    CHAVE_MODO,
+    CHAVES_GLOBAIS,
+    MAPA_GLOBAIS,
+    botao_limpar_filtros,
+    hidratar_globais,
+    persistir_globais,
+)
 from app.helpers import (
     carregar_lancamentos,
     chave_ord_ref_iso,
@@ -237,12 +247,19 @@ def _aplicar_clique_barra(df: pd.DataFrame) -> None:
     # recorte exibido — pouco frequente, mas defensivo).
     try:
         ano_clicado = int(ref_iso.split("-")[0])
-        st.session_state["dashboard_ano"] = str(ano_clicado)
+        st.session_state[CHAVE_ANO] = str(ano_clicado)
     except (ValueError, IndexError):
         pass
 
-    st.session_state["dashboard_modo"] = MODO_MENSAL
-    st.session_state["dashboard_mes"] = str(label)
+    st.session_state[CHAVE_MODO] = MODO_MENSAL
+    # `CHAVE_MES` guarda ISO (estável p/ URL); a key auxiliar do widget
+    # guarda o label PT-BR. Precisa setar AMBAS porque o `selecionar_mes`
+    # só faz mirror ISO→label na primeira renderização (pra não
+    # sobrescrever a escolha do user em reruns subsequentes). Como o
+    # widget já foi renderizado antes desse clique, o mirror não rodaria
+    # — fazemos manual aqui.
+    st.session_state[CHAVE_MES] = ref_iso
+    st.session_state[f"{CHAVE_MES}__widget"] = str(label)
 
 
 def _grafico_pizza_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAFICO) -> None:
@@ -397,6 +414,11 @@ def _kpis_mensais(
 def render() -> None:
     st.title("💸 Gastômetro — Dashboard")
 
+    # Hidrata filtros globais (`ano`, `mes`, `modo`) a partir da URL
+    # antes de renderizar qualquer widget. Idempotente: só hidrata se
+    # ainda não há valor em `session_state`.
+    hidratar_globais()
+
     df = carregar_lancamentos()
 
     if df is None or df.empty:
@@ -409,14 +431,14 @@ def render() -> None:
 
     # IMPORTANTE: processa o clique do bar chart ANTES de renderizar os
     # controles (radio + selectboxes). Isso permite ajustar
-    # `session_state["dashboard_modo"]` etc. sem disparar erro de
-    # "widget já criado". Se o usuário clicou numa barra no run
-    # anterior, o run atual já vem com modo=Mensal e mês selecionado.
+    # `session_state[CHAVE_MODO]` etc. sem disparar erro de "widget já
+    # criado". Se o usuário clicou numa barra no run anterior, o run
+    # atual já vem com modo=Mensal e mês selecionado.
     _aplicar_clique_barra(df)
 
-    col_ano, col_modo, col_mes = st.columns([1, 1, 1])
+    col_ano, col_modo, col_mes, col_limpar = st.columns([1, 1, 1, 0.7])
     with col_ano:
-        ano = selecionar_ano(df, key="dashboard_ano")
+        ano = selecionar_ano(df)
 
     df_recorte = filtrar_por_ano(df, ano)
     if df_recorte.empty:
@@ -431,13 +453,25 @@ def render() -> None:
             [MODO_ANUAL, MODO_MENSAL],
             index=0,
             horizontal=True,
-            key="dashboard_modo",
+            key=CHAVE_MODO,
         )
 
     ref_selecionada: str | None = None
     if modo == MODO_MENSAL:
         with col_mes:
-            ref_selecionada = selecionar_mes(df_recorte, key="dashboard_mes")
+            ref_selecionada = selecionar_mes(df_recorte)
+
+    with col_limpar:
+        # Alinhamento vertical: spacer fake pra empurrar o botão pra
+        # base da linha (selectboxes têm label em cima).
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        if botao_limpar_filtros(
+            CHAVES_GLOBAIS + (f"{CHAVE_MES}__widget",),
+            MAPA_GLOBAIS.values(),
+            key="btn_limpar_dashboard",
+            rotulo_auxiliar="Volta ao ano corrente, visão anual",
+        ):
+            st.rerun()
 
     rotulo_ano = (
         f"no ano {ano}" if ano is not None else "(todo o histórico)"
@@ -476,6 +510,10 @@ def render() -> None:
 
     st.divider()
     _top_categorias_periodo(df_fluxo, titulo_periodo=titulo_periodo)
+
+    # Persiste filtros globais na URL (idempotente). Roda no fim do
+    # render pra capturar o último valor dos widgets.
+    persistir_globais()
 
 
 render()

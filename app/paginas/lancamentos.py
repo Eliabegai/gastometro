@@ -1,23 +1,45 @@
 """Página Lançamentos — exploração / filtragem da tabela completa.
 
-Filtros na sidebar (via `sidebar_filtros_lancamentos`): pessoa, conta,
-categoria, tipo, referência mês, data, busca por texto. Mostra
-contagem + soma do recorte e tabela paginada com export pra CSV.
+A tabela respeita 2 níveis de filtro:
 
-Default: período pré-populado com 1/jan a 31/dez do ano corrente
-(clamp em min/max do banco). Pra ver o histórico inteiro, basta
-expandir o seletor "Período" na sidebar.
+1. **Período global** (ano + modo + mês) compartilhado com Dashboard,
+   Categorias e Faturas. Se você selecionou "Maio/2024" no Dashboard,
+   essa tela já abre filtrada por Maio/2024. Um banner no topo
+   informa o recorte ativo.
+
+2. **Filtros locais** na sidebar (pessoa, conta, categoria, tipo,
+   referência extra, data, busca por texto) — aplicados em cima do
+   recorte global.
+
+Tudo é persistido na URL (`?ano=2024&mes=2024-05&lanc_pessoas=Eliabe|Ana&...`)
+e sobrevive a F5 / abertura de novas abas — link compartilhável.
+O botão "🧹 Limpar filtros" na sidebar zera os locais; pra limpar
+o período global, use o botão equivalente no Dashboard/Categorias.
 """
 
 from __future__ import annotations
 
 import streamlit as st
 
+from app.estado import (
+    CHAVES_GLOBAIS,
+    CHAVES_LANCAMENTOS,
+    MAPA_GLOBAIS,
+    MAPA_LANCAMENTOS,
+    botao_limpar_filtros,
+    hidratar_globais,
+    hidratar_lancamentos,
+    persistir_globais,
+    persistir_lancamentos,
+)
 from app.helpers import (
     aplicar_filtros,
     carregar_lancamentos,
+    filtrar_por_periodo_global,
     formatar_brl,
+    periodo_global_ativo,
     ref_para_nome_br,
+    rotulo_periodo_global,
     sidebar_filtros_lancamentos,
 )
 
@@ -108,8 +130,41 @@ def _exportar_csv(df) -> None:
     )
 
 
+def _banner_periodo_global() -> None:
+    """Banner informativo no topo da página: mostra o recorte ativo do
+    filtro global (ano/mês) com link pra apagar. No-op se não há
+    período definido (todo o histórico)."""
+    if not periodo_global_ativo():
+        return
+    rotulo = rotulo_periodo_global()
+    col_msg, col_btn = st.columns([5, 1])
+    with col_msg:
+        st.info(
+            f"📅 Mostrando **{rotulo}** — filtro definido no Dashboard. "
+            "Os filtros da sidebar (pessoa, conta, busca…) atuam em "
+            "cima desse recorte.",
+            icon="🔎",
+        )
+    with col_btn:
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        if botao_limpar_filtros(
+            CHAVES_GLOBAIS + ("filtro_global_mes__widget",),
+            MAPA_GLOBAIS.values(),
+            key="btn_limpar_periodo_lanc",
+            label="🧹 Limpar período",
+            rotulo_auxiliar="Volta a mostrar todo o histórico",
+        ):
+            st.rerun()
+
+
 def render() -> None:
     st.title("Lançamentos")
+
+    # Hidrata tanto globais (ano/mes/modo) quanto locais (filtros da
+    # sidebar) — globais vêm primeiro porque afetam quais opções
+    # aparecem na sidebar (depois do recorte global).
+    hidratar_globais()
+    hidratar_lancamentos()
 
     df = carregar_lancamentos()
     if df is None or df.empty:
@@ -119,8 +174,16 @@ def render() -> None:
         )
         return
 
-    filtros = sidebar_filtros_lancamentos(df)
-    sub = aplicar_filtros(df, **filtros)
+    _banner_periodo_global()
+
+    # 1. Aplica o período global PRIMEIRO. Resultado vira o universo
+    #    cuja sidebar mostra os filtros locais (opções vêm só dos
+    #    lançamentos do recorte — não polui dropdown com pessoas /
+    #    categorias que não aparecem no período).
+    df_periodo = filtrar_por_periodo_global(df)
+
+    filtros = sidebar_filtros_lancamentos(df_periodo)
+    sub = aplicar_filtros(df_periodo, **filtros)
 
     if filtros.get("data_inicio") and filtros.get("data_fim"):
         ini = filtros["data_inicio"]
@@ -131,10 +194,25 @@ def render() -> None:
             f"Período** na sidebar."
         )
 
+    # Botão "Limpar filtros" no rodapé da sidebar — perto dos filtros
+    # que ele reseta. Inclui a key auxiliar de refs (label↔iso).
+    st.sidebar.divider()
+    if botao_limpar_filtros(
+        list(CHAVES_LANCAMENTOS) + ["f_refs__widget"],
+        list(MAPA_LANCAMENTOS.values()),
+        key="btn_limpar_lanc",
+        rotulo_auxiliar="Zera pessoa, conta, categoria, tipo, busca e período",
+        na_sidebar=True,
+    ):
+        st.rerun()
+
     _resumo(sub)
     st.divider()
     _tabela(sub)
     _exportar_csv(sub)
+
+    persistir_lancamentos()
+    persistir_globais()
 
 
 render()

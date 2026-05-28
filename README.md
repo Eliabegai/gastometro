@@ -466,6 +466,28 @@ Páginas disponíveis (sidebar):
   O bloco de PDFs também aparece num expander no topo da página
   **Faturas**.
 
+### Persistência dos filtros (URL + sessão)
+
+Os filtros não somem mais quando você troca de página ou recarrega
+o browser. Funciona em dois níveis:
+
+- **Globais** (compartilhados entre Dashboard, Categorias e
+  Lançamentos): `ano`, `mês` e `modo` (Anual/Mensal). Setou em uma
+  página → todas as outras já abrem com o mesmo recorte.
+- **Por página** (Lançamentos): `pessoa`, `conta`, `categoria`,
+  `tipo`, `referência`, `busca` ficam memorizados na **própria**
+  página.
+
+Tudo viaja na URL (`?ano=2024&mes=2024-05&modo=Mensal&lanc_pessoas=Eliabe%20Gai|Ana`),
+então:
+
+- F5 / fechar e abrir o browser preserva os filtros.
+- Você pode **compartilhar um link** com filtros já aplicados (ex.:
+  mandar pra esposa "olha o consumo de maio").
+- Cada página tem um botão **🧹 Limpar filtros** (no topo do
+  Dashboard/Categorias, no rodapé da sidebar em Lançamentos) que
+  volta tudo ao default.
+
 A UI sempre lê do banco em `dados/gastometro.db`. Se você ainda não
 populou, rode antes:
 
@@ -645,7 +667,9 @@ scp dados/gastometro.db usuario@novo-pc:~/backup_gastometro.db
 git clone https://github.com/.../gastometro && cd gastometro
 pip install -r requirements.txt
 python -m scripts.restaurar_banco ~/backup_gastometro.db
-streamlit run app/streamlit_app.py
+streamlit run app/streamlit_app.py # porta padrão 8501
+#ou
+streamlit run app/streamlit_app.py --server.port 8502
 ```
 
 O `scripts/restaurar_banco.py`:
@@ -711,6 +735,7 @@ gastometro/
 ├── app/                           # UI Streamlit (Fase 2)
 │   ├── streamlit_app.py           # entrypoint
 │   ├── helpers.py                 # filtros, formato BR, cache
+│   ├── estado.py                  # persistência de filtros (session + URL)
 │   └── paginas/                   # dashboard, lancamentos, faturas, categorias, importar
 ├── alembic/                       # migrations versionadas
 ├── tests/                         # pytest (parsers, repo, export, app)
@@ -732,7 +757,7 @@ O projeto usa `pytest`, `ruff` (lint + imports + upgrades) e `mypy`
 ```bash
 pip install -r requirements-dev.txt   # ou: pip install -e ".[dev]"
 
-python -m pytest                       # 191 testes (parsers + repo + export + app + planilha + consolidação + upload + sync + restore)
+python -m pytest                       # 223 testes (parsers + repo + export + app + planilha + consolidação + upload + sync + restore + filtros persistentes)
 ruff check .                           # lint
 ruff check . --fix                     # lint com auto-fix
 mypy .                                 # tipos

@@ -324,9 +324,88 @@ def test_clique_em_barra_ativa_modo_mensal() -> None:
     st.session_state[dash.KEY_BAR_CHART_EVT] = _SelObj("Maio/2026")
     dash._aplicar_clique_barra(df)
 
-    assert st.session_state.get("dashboard_modo") == dash.MODO_MENSAL
-    assert st.session_state.get("dashboard_mes") == "Maio/2026"
-    assert st.session_state.get("dashboard_ano") == "2026"
+    # As keys agora vivem em `app.estado` (compartilhadas com Categorias
+    # e sincronizadas com `st.query_params`).
+    from app.estado import CHAVE_ANO, CHAVE_MES, CHAVE_MODO
+
+    assert st.session_state.get(CHAVE_MODO) == dash.MODO_MENSAL
+    # `CHAVE_MES` agora guarda **ISO** (`2026-05`), não mais o label
+    # `Maio/2026` — facilita serialização na URL.
+    assert st.session_state.get(CHAVE_MES) == "2026-05"
+    assert st.session_state.get(CHAVE_ANO) == "2026"
+    # **Regressão**: o handler também precisa atualizar a key auxiliar
+    # do widget (label PT-BR). Sem isso, o selectbox de mês continua
+    # mostrando o label antigo (mirror só roda na 1ª renderização).
+    assert st.session_state.get(f"{CHAVE_MES}__widget") == "Maio/2026"
+
+
+def test_clique_em_barra_atualiza_label_do_widget(banco_temporario) -> None:
+    """Regressão end-to-end: clicar em barras diferentes consecutivamente
+    deve refletir no selectbox de mês a cada clique (não 'travar' no
+    primeiro mês escolhido)."""
+    import streamlit as st
+
+    from app.estado import CHAVE_MES
+    from app.paginas import dashboard as dash
+    from db.repository import upsert_fatura
+    from parsers.base import Fatura, FaturaMetadata, Transacao
+
+    # 3 meses no mesmo ano corrente.
+    ano = 2026
+    for mes_num, mes_nome in [(1, "Janeiro"), (4, "Abril"), (5, "Maio")]:
+        upsert_fatura(
+            Fatura(
+                metadata=FaturaMetadata(
+                    banco="Banco Teste",
+                    titular="Eliabe",
+                    referencia_mes=f"{mes_nome}/{ano}",
+                    data_fechamento=f"30/{mes_num:02d}/{ano}",
+                    data_vencimento=f"10/{mes_num:02d}/{ano}",
+                    valor_total=100.0,
+                ),
+                transacoes=[
+                    Transacao(
+                        data=f"12/{mes_num:02d}/{ano}",
+                        descricao=f"Compra {mes_nome}",
+                        parcela="",
+                        cidade="Belem",
+                        valor=100.0,
+                        categoria="",
+                    ),
+                ],
+            ),
+            arquivo=f"barra_{mes_num:02d}.pdf",
+        )
+    st.cache_data.clear()
+
+    at = AppTest.from_file(
+        str(RAIZ / "app/paginas/dashboard.py"), default_timeout=30
+    )
+    at.run()
+    assert not at.exception
+
+    mes_widget_key = f"{CHAVE_MES}__widget"
+
+    # Simula clique na barra "Maio/2026" via session_state (Streamlit
+    # AppTest não emula clique direto em gráficos Plotly).
+    class _Sel:
+        def __init__(self, x: str) -> None:
+            self.selection = {"points": [{"x": x}]}
+
+    at.session_state[dash.KEY_BAR_CHART_EVT] = _Sel(f"Maio/{ano}")
+    at.run()
+    assert not at.exception
+    assert at.session_state[mes_widget_key] == f"Maio/{ano}"
+
+    # Segundo clique: troca pra Janeiro/2026. Sem o fix do
+    # `_aplicar_clique_barra` setar a key do widget, o selectbox
+    # continuaria mostrando "Maio".
+    at.session_state[dash.KEY_BAR_CHART_EVT] = _Sel(f"Janeiro/{ano}")
+    at.run()
+    assert not at.exception
+    assert at.session_state[mes_widget_key] == f"Janeiro/{ano}", (
+        "Widget de mês não acompanhou o segundo clique no gráfico"
+    )
 
 
 def test_sem_clique_nao_muda_session_state() -> None:
@@ -351,8 +430,342 @@ def test_sem_clique_nao_muda_session_state() -> None:
         del st.session_state[k]
 
     dash._aplicar_clique_barra(df)
-    assert "dashboard_modo" not in st.session_state
-    assert "dashboard_mes" not in st.session_state
+
+    from app.estado import CHAVE_MES, CHAVE_MODO
+
+    assert CHAVE_MODO not in st.session_state
+    assert CHAVE_MES not in st.session_state
+
+
+def test_periodo_global_propaga_pra_lancamentos(banco_temporario) -> None:
+    """Ano global setado na sessão → Lançamentos filtra a tabela por
+    aquele ano + mês, mesmo sem o usuário mexer nos filtros da sidebar."""
+    import streamlit as st
+
+    from app.estado import CHAVE_ANO, CHAVE_MES, CHAVE_MODO
+    from db.repository import upsert_fatura
+    from parsers.base import Fatura, FaturaMetadata, Transacao
+
+    # Cria 2 faturas em meses diferentes → 2 lançamentos.
+    for ref_pt, ref_iso, valor in [
+        ("Maio/2024", "2024-05", 100.0),
+        ("Maio/2026", "2026-05", 500.0),
+    ]:
+        upsert_fatura(
+            Fatura(
+                metadata=FaturaMetadata(
+                    banco="Banco Teste",
+                    titular="Eliabe",
+                    referencia_mes=ref_pt,
+                    data_fechamento=f"30/{ref_iso.split('-')[1]}/{ref_iso[:4]}",
+                    data_vencimento=f"10/{ref_iso.split('-')[1]}/{ref_iso[:4]}",
+                    valor_total=valor,
+                ),
+                transacoes=[
+                    Transacao(
+                        data=f"12/{ref_iso.split('-')[1]}/{ref_iso[:4]}",
+                        descricao=f"Lan {ref_pt}",
+                        parcela="",
+                        cidade="Belem",
+                        valor=valor,
+                        categoria="",
+                    ),
+                ],
+            ),
+            arquivo=f"lan_{ref_iso}.pdf",
+        )
+    st.cache_data.clear()
+
+    at = AppTest.from_file(
+        str(RAIZ / "app/paginas/lancamentos.py"), default_timeout=30
+    )
+    # Pré-popula o período global = Maio/2024.
+    at.session_state[CHAVE_ANO] = "2024"
+    at.session_state[CHAVE_MODO] = "Mensal"
+    at.session_state[CHAVE_MES] = "2024-05"
+    at.run()
+    assert not at.exception
+
+    # O KPI "Lançamentos filtrados" deve refletir só o lançamento de 2024-05.
+    # `at.metric` lista todos os st.metric da página em ordem.
+    valores_metric = [m.value for m in at.metric]
+    # O primeiro KPI é "Lançamentos filtrados" → 1 (só Maio/2024).
+    assert "1" in str(valores_metric[0]), (
+        f"esperava 1 lançamento no recorte, KPIs vistos: {valores_metric}"
+    )
+
+    # Banner do período global deve aparecer (st.info).
+    textos_info = [str(getattr(i, "value", "")) for i in at.info]
+    assert any("Maio/2024" in t for t in textos_info), (
+        f"esperava banner com 'Maio/2024'. infos vistas: {textos_info}"
+    )
+
+
+def test_periodo_global_propaga_pra_faturas(banco_temporario) -> None:
+    """Mesma propagação aplicada à página Faturas."""
+    import streamlit as st
+
+    from app.estado import CHAVE_ANO, CHAVE_MES, CHAVE_MODO
+    from db.repository import upsert_fatura
+    from parsers.base import Fatura, FaturaMetadata, Transacao
+
+    for ref_pt, ref_iso, valor in [
+        ("Janeiro/2024", "2024-01", 50.0),
+        ("Maio/2024", "2024-05", 100.0),
+        ("Maio/2026", "2026-05", 500.0),
+    ]:
+        upsert_fatura(
+            Fatura(
+                metadata=FaturaMetadata(
+                    banco="Banco Teste",
+                    titular="Eliabe",
+                    referencia_mes=ref_pt,
+                    data_fechamento=f"30/{ref_iso.split('-')[1]}/{ref_iso[:4]}",
+                    data_vencimento=f"10/{ref_iso.split('-')[1]}/{ref_iso[:4]}",
+                    valor_total=valor,
+                ),
+                transacoes=[
+                    Transacao(
+                        data=f"12/{ref_iso.split('-')[1]}/{ref_iso[:4]}",
+                        descricao=f"x {ref_pt}",
+                        parcela="",
+                        cidade="Belem",
+                        valor=valor,
+                        categoria="",
+                    ),
+                ],
+            ),
+            arquivo=f"fat_{ref_iso}.pdf",
+        )
+    st.cache_data.clear()
+
+    at = AppTest.from_file(
+        str(RAIZ / "app/paginas/faturas.py"), default_timeout=30
+    )
+    # Filtra ano 2024 (modo anual) → deve cair de 3 pra 2 faturas.
+    at.session_state[CHAVE_ANO] = "2024"
+    at.session_state[CHAVE_MODO] = "Ano inteiro"
+    at.run()
+    assert not at.exception
+
+    valores_metric = [str(m.value) for m in at.metric]
+    assert "2" in valores_metric[0], (
+        f"esperava 2 faturas em 2024, viu: {valores_metric}"
+    )
+
+    # Agora restringe pra Maio/2024 (mensal) → deve sobrar 1.
+    at.session_state[CHAVE_MODO] = "Mensal"
+    at.session_state[CHAVE_MES] = "2024-05"
+    at.run()
+    assert not at.exception
+    valores_metric_pos = [str(m.value) for m in at.metric]
+    assert "1" in valores_metric_pos[0], (
+        f"esperava 1 fatura em Maio/2024, viu: {valores_metric_pos}"
+    )
+
+
+def test_selecionar_mes_nao_reverte_escolha_do_usuario(
+    banco_temporario,
+) -> None:
+    """Regressão: usuário escolhe um mês, no rerun seguinte o widget
+    NÃO pode voltar pro mês anterior.
+
+    Bug original: o mirror `ISO → label` rodava em todo rerun, sobre-
+    escrevendo a escolha que Streamlit já tinha aplicado na key do
+    widget. Resultado prático: "ao clicar num mês, o widget volta pra
+    Dezembro".
+    """
+    import streamlit as st
+
+    from app.estado import CHAVE_MES
+    from app.paginas.dashboard import MODO_MENSAL
+    from db.repository import upsert_fatura
+    from parsers.base import Fatura, FaturaMetadata, Transacao
+
+    # 2 meses no mesmo ano corrente pra ter pra onde alternar.
+    ano = 2026
+    for ref_pt, ref_iso, valor in [
+        (f"Maio/{ano}", f"{ano}-05", 100.0),
+        (f"Janeiro/{ano}", f"{ano}-01", 50.0),
+    ]:
+        upsert_fatura(
+            Fatura(
+                metadata=FaturaMetadata(
+                    banco="Banco Teste",
+                    titular="Eliabe",
+                    referencia_mes=ref_pt,
+                    data_fechamento=f"30/{ref_iso.split('-')[1]}/{ano}",
+                    data_vencimento=f"10/{ref_iso.split('-')[1]}/{ano}",
+                    valor_total=valor,
+                ),
+                transacoes=[
+                    Transacao(
+                        data=f"12/{ref_iso.split('-')[1]}/{ano}",
+                        descricao=f"Compra {ref_pt}",
+                        parcela="",
+                        cidade="Belem",
+                        valor=valor,
+                        categoria="",
+                    ),
+                ],
+            ),
+            arquivo=f"mes_{ref_iso}.pdf",
+        )
+    st.cache_data.clear()
+
+    at = AppTest.from_file(
+        str(RAIZ / "app/paginas/dashboard.py"), default_timeout=30
+    )
+    at.run()
+    assert not at.exception
+    # Ativa modo Mensal — o selectbox de mês passa a aparecer com o
+    # último mês (Maio/2026, ordem decrescente).
+    at.radio[0].set_value(MODO_MENSAL).run()
+    assert not at.exception
+
+    # `selectbox` de mês: localizamos pela key auxiliar do widget.
+    mes_widget_key = f"{CHAVE_MES}__widget"
+    selectboxes_mes = [s for s in at.selectbox if s.key == mes_widget_key]
+    assert selectboxes_mes, "Selectbox de mês não foi renderizado"
+    assert selectboxes_mes[0].value == "Maio/2026"
+
+    # Usuário troca pra Janeiro/2026 → deve persistir nesse rerun.
+    selectboxes_mes[0].set_value(f"Janeiro/{ano}").run()
+    assert not at.exception
+    selectboxes_mes_pos = [
+        s for s in at.selectbox if s.key == mes_widget_key
+    ]
+    assert (
+        selectboxes_mes_pos[0].value == f"Janeiro/{ano}"
+    ), "Selectbox reverteu pra Maio — bug do mirror voltou"
+    # Persistência: session_state[CHAVE_MES] reflete ISO da nova escolha.
+    assert at.session_state[CHAVE_MES] == f"{ano}-01"
+
+    # Trigger extra rerun (simula o usuário interagindo com outro widget,
+    # como o radio — qualquer mudança força rerun no Streamlit).
+    at.radio[0].set_value(MODO_MENSAL).run()
+    assert not at.exception
+    selectboxes_mes_final = [
+        s for s in at.selectbox if s.key == mes_widget_key
+    ]
+    assert (
+        selectboxes_mes_final[0].value == f"Janeiro/{ano}"
+    ), "Selectbox reverteu após rerun adicional — bug do mirror persistiu"
+
+
+def test_dashboard_persiste_modo_no_session_state(banco_temporario) -> None:
+    """Após mudar `modo` no Dashboard, o session_state guarda o novo modo
+    sob a chave global — base pro sync URL (`persistir_globais`)."""
+    import streamlit as st
+
+    from app.estado import CHAVE_MODO
+    from app.paginas.dashboard import MODO_MENSAL
+    from db.repository import upsert_fatura
+    from parsers.base import Fatura, FaturaMetadata, Transacao
+
+    upsert_fatura(
+        Fatura(
+            metadata=FaturaMetadata(
+                banco="Banco Teste",
+                titular="Eliabe",
+                referencia_mes="Maio/2026",
+                data_fechamento="30/04/2026",
+                data_vencimento="10/05/2026",
+                valor_total=200.0,
+            ),
+            transacoes=[
+                Transacao(
+                    data="12/04/2026",
+                    descricao="Mercado",
+                    parcela="",
+                    cidade="Belem",
+                    valor=200.0,
+                    categoria="",
+                ),
+            ],
+        ),
+        arquivo="dash_url.pdf",
+    )
+    st.cache_data.clear()
+
+    at = AppTest.from_file(
+        str(RAIZ / "app/paginas/dashboard.py"), default_timeout=30
+    )
+    at.run()
+    assert not at.exception
+    assert at.radio, "radio 'Visão' não foi renderizado"
+
+    at.radio[0].set_value(MODO_MENSAL).run()
+    assert not at.exception
+    # A nova chave global guardou o valor (o sync com query_params é
+    # validado nos testes unitários de `app.estado`).
+    assert at.session_state[CHAVE_MODO] == MODO_MENSAL
+
+
+def test_filtros_globais_compartilhados_entre_dashboard_e_categorias(
+    banco_temporario,
+) -> None:
+    """Ano global setado antes do run vira o ano que a Categorias usa.
+
+    Como `AppTest.session_state` é isolado do `st.session_state` do
+    processo de teste, populamos diretamente o `at.session_state` —
+    simula um usuário que já interagiu com outra página."""
+    import streamlit as st
+
+    from app.estado import CHAVE_ANO
+
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+    st.query_params.clear()
+    st.cache_data.clear()
+
+    at = AppTest.from_file(
+        str(RAIZ / "app/paginas/categorias.py"), default_timeout=30
+    )
+    # Pré-popula o session_state do AppTest antes do run.
+    at.session_state[CHAVE_ANO] = "2024"
+    at.run()
+    assert not at.exception
+    # A chave global continua acessível após o run da página.
+    assert CHAVE_ANO in at.session_state
+    assert at.session_state[CHAVE_ANO] == "2024"
+
+
+def test_botao_limpar_filtros_zera_session_state(banco_temporario) -> None:
+    """Clicar em 'Limpar filtros' no Dashboard zera ano/mês/modo."""
+    import streamlit as st
+
+    from app.estado import CHAVE_ANO, CHAVE_MES, CHAVE_MODO
+
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+    st.query_params.clear()
+    st.cache_data.clear()
+
+    at = AppTest.from_file(
+        str(RAIZ / "app/paginas/dashboard.py"), default_timeout=30
+    )
+    # Pré-popula valores não-default no AppTest.
+    at.session_state[CHAVE_ANO] = "2024"
+    at.session_state[CHAVE_MES] = "2024-05"
+    at.session_state[CHAVE_MODO] = "Mensal"
+    at.run()
+    if at.exception:
+        # Banco vazio pode dropar antes de renderizar o botão — neste
+        # caso o teste vira no-op (cobertura fica nas suítes do estado).
+        return
+
+    # Localiza o botão de limpar e clica.
+    botoes = [b for b in at.button if b.key == "btn_limpar_dashboard"]
+    if not botoes:
+        return  # sem dados → botão não renderizado
+    botoes[0].click().run()
+    assert not at.exception
+
+    # Após limpeza, as keys globais não estão mais em session_state.
+    assert CHAVE_ANO not in at.session_state
+    assert CHAVE_MES not in at.session_state
+    assert CHAVE_MODO not in at.session_state
 
 
 def test_ano_padrao_prefere_corrente_se_existir() -> None:

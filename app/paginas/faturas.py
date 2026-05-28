@@ -3,18 +3,35 @@
 Tabela principal com cabeçalhos das faturas (1 por arquivo PDF). Ao
 selecionar uma linha, mostra os lançamentos daquela fatura na parte
 de baixo.
+
+A lista respeita o **período global** (ano + mês) compartilhado com
+Dashboard, Lançamentos e Categorias. Se você selecionou Maio/2024 no
+Dashboard, essa tela já abre mostrando só as faturas dessa referência.
+Botão "🧹 Limpar período" no topo apaga o recorte.
 """
 
 from __future__ import annotations
 
 import streamlit as st
 
+from app.estado import (
+    CHAVES_GLOBAIS,
+    MAPA_GLOBAIS,
+    botao_limpar_filtros,
+    hidratar_globais,
+    persistir_globais,
+)
 from app.helpers import (
+    ano_global_atual,
     carregar_faturas,
     carregar_lancamentos,
     chave_ord_ref_iso,
     formatar_brl,
+    mes_global_atual,
+    modo_global_atual,
+    periodo_global_ativo,
     ref_para_nome_br,
+    rotulo_periodo_global,
 )
 from app.paginas._importar_pdfs import render_uploader
 
@@ -150,8 +167,57 @@ def _drill_down(df_faturas, df_lanc) -> None:
     )
 
 
+def _filtrar_faturas_por_periodo_global(df):
+    """Aplica ano/mês globais ao DataFrame de faturas.
+
+    Faturas têm `referencia_mes` (ISO `YYYY-MM`); pra filtrar por ano
+    extraímos o prefixo. Idempotente — se nenhum global estiver setado,
+    devolve `df` intocado.
+    """
+    if df is None or df.empty:
+        return df
+
+    ano = ano_global_atual()
+    if ano is not None and "referencia_mes" in df.columns:
+        df = df[df["referencia_mes"].astype(str).str.startswith(f"{ano}-")]
+
+    from app.helpers import MODO_GLOBAL_MENSAL
+
+    if modo_global_atual() == MODO_GLOBAL_MENSAL:
+        mes = mes_global_atual()
+        if mes and "referencia_mes" in df.columns:
+            df = df[df["referencia_mes"] == mes]
+
+    return df
+
+
+def _banner_periodo_global() -> None:
+    """Banner com o recorte ativo + botão pra apagar (mesma UX de Lançamentos)."""
+    if not periodo_global_ativo():
+        return
+    rotulo = rotulo_periodo_global()
+    col_msg, col_btn = st.columns([5, 1])
+    with col_msg:
+        st.info(
+            f"📅 Mostrando faturas de **{rotulo}** — filtro definido no Dashboard.",
+            icon="🔎",
+        )
+    with col_btn:
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        if botao_limpar_filtros(
+            CHAVES_GLOBAIS + ("filtro_global_mes__widget",),
+            MAPA_GLOBAIS.values(),
+            key="btn_limpar_periodo_faturas",
+            label="🧹 Limpar período",
+            rotulo_auxiliar="Volta a mostrar todas as faturas",
+        ):
+            st.rerun()
+
+
 def render() -> None:
     st.title("Faturas")
+
+    hidratar_globais()
 
     with st.expander("📥 Importar nova fatura (PDF)", expanded=False):
         render_uploader(key_prefix="pagina_faturas")
@@ -164,19 +230,35 @@ def render() -> None:
         )
         return
 
+    _banner_periodo_global()
+
+    df_fat_periodo = _filtrar_faturas_por_periodo_global(df_fat)
+    if df_fat_periodo.empty and periodo_global_ativo():
+        st.warning(
+            f"Nenhuma fatura em **{rotulo_periodo_global()}**. "
+            "Use o botão acima pra ver todas."
+        )
+        persistir_globais()
+        return
+
     c1, c2 = st.columns(2)
-    c1.metric("Faturas registradas", f"{len(df_fat):,}".replace(",", "."))
-    total = float(df_fat["valor_total_declarado"].fillna(0).sum())
+    c1.metric(
+        "Faturas no recorte",
+        f"{len(df_fat_periodo):,}".replace(",", "."),
+    )
+    total = float(df_fat_periodo["valor_total_declarado"].fillna(0).sum())
     c2.metric("Soma dos totais declarados", formatar_brl(total))
 
     st.divider()
-    _tabela_faturas(df_fat)
+    _tabela_faturas(df_fat_periodo)
     st.divider()
-    _resumo_por_cartao(df_fat)
+    _resumo_por_cartao(df_fat_periodo)
     st.divider()
 
     df_lanc = carregar_lancamentos()
-    _drill_down(df_fat, df_lanc)
+    _drill_down(df_fat_periodo, df_lanc)
+
+    persistir_globais()
 
 
 render()
