@@ -93,3 +93,20 @@ def get_session() -> Iterator[Session]:
 def resetar_engine_cache() -> None:
     """Força recriação da engine na próxima chamada. Útil em testes."""
     get_engine.cache_clear()
+
+
+def garantir_schema() -> None:
+    """Aplica `alembic upgrade head` programaticamente (idempotente).
+
+    Útil pro usuário final que não conhece Alembic: rodar `gastometro`
+    pela primeira vez cria o banco e aplica todas as migrations sem
+    precisar lembrar de comandos extras. Em produção/CI, prefira o
+    comando explícito (`alembic upgrade head`).
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(str(RAIZ / "alembic.ini"))
+    cfg.set_main_option("script_location", str(RAIZ / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url_padrao())
+    command.upgrade(cfg, "head")

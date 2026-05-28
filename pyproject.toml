@@ -80,3 +80,12 @@ check_untyped_defs = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+# SQLAlchemy 2.x + SQLModel emitem expressões cujo retorno o mypy resolve
+# como `bool` (overload das colunas tipadas), o que produz falsos
+# `arg-type` em joins/order_by e `assignment` em `obj.fk = relacionado.id`
+# (que volta `int | None`). Esses são padrões idiomáticos da lib;
+# ignoramos só nesse módulo pra não esconder bugs do resto do projeto.
+[[tool.mypy.overrides]]
+module = "db.repository"
+disable_error_code = ["arg-type", "assignment", "return-value", "call-overload"]

@@ -13,7 +13,7 @@ from __future__ import annotations
 from sqlmodel import Session, select
 
 from categorias import CATEGORIAS
-from db.engine import get_session
+from db.engine import garantir_schema, get_session
 from db.models import (
     TIPO_CATEGORIA_DESPESA,
     TIPO_CATEGORIA_RECEITA,
@@ -103,10 +103,15 @@ def _semear_categorias(session: Session) -> None:
 def seed_inicial() -> dict[str, int]:
     """Popula pessoas, contas e categorias iniciais. Idempotente.
 
+    Aplica `alembic upgrade head` antes (no-op se já estiver na
+    versão atual) — garante que rodar pela primeira vez funcione
+    sem o usuário precisar saber sobre Alembic.
+
     Devolve dicionário com contagens (`{"pessoas": N, "contas": M,
     "categorias": K}`) já considerando os totais finais (não só os
     inseridos nesta chamada).
     """
+    garantir_schema()
     with get_session() as session:
         mapa = _semear_pessoas(session)
         _semear_contas(session, mapa)
