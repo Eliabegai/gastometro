@@ -32,3 +32,31 @@ def isolar_categorias_usuario(tmp_path, monkeypatch):
     yield
     categorias._regras_compiladas.cache_clear()
     categorias._carregar_categorias_usuario.cache_clear()
+
+
+@pytest.fixture
+def banco_temporario(tmp_path, monkeypatch):
+    """Aponta `GASTOMETRO_DB_URL` pra um SQLite efêmero por teste.
+
+    Reseta o cache da engine antes e depois, roda `seed_inicial()` pra
+    aplicar migrations e popular tabelas básicas. Cada teste fica
+    completamente isolado — não toca o `dados/gastometro.db` real.
+
+    Yields o caminho do `.db` (útil pra testes que validam o arquivo).
+    """
+    db_path = tmp_path / "gastometro_test.db"
+    db_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("GASTOMETRO_DB_URL", db_url)
+    monkeypatch.setenv("GASTOMETRO_DADOS_DIR", str(tmp_path))
+
+    from db import engine as db_engine
+
+    db_engine.resetar_engine_cache()
+
+    from db.seed import seed_inicial
+
+    seed_inicial()
+
+    yield db_path
+
+    db_engine.resetar_engine_cache()

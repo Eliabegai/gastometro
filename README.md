@@ -420,26 +420,421 @@ O comando:
 > gastometro recategorizar   # propaga JSON + dicionario p/ tudo
 > ```
 
+## Interface Web (Streamlit)
+
+A partir da Fase 2 o projeto também tem uma UI Streamlit pra consumir
+os dados do banco SQLite local (mesma fonte que alimenta o Excel).
+
+```bash
+streamlit run app/streamlit_app.py
+# ou, equivalente com porta fixa e sem telemetria:
+streamlit run app/streamlit_app.py --server.port=8501 --browser.gatherUsageStats=false
+```
+
+Páginas disponíveis (sidebar):
+
+- **Dashboard** — toggle **Ano inteiro × Mensal** no topo. No modo
+  anual, KPIs (Despesas, Receitas, Saldo, Qtde) do ano selecionado +
+  pie e top 10 do ano todo. No modo mensal, escolhe o mês e os KPIs
+  passam a mostrar despesas/receitas do mês com delta vs mês anterior;
+  o pie e top 10 também recortam pro mês selecionado. As barras
+  mensais sempre mostram o ano inteiro pra dar contexto (mês
+  selecionado fica em destaque visual). **Clicar numa barra** muda
+  pro modo Mensal já com o mês clicado selecionado — atalho rápido
+  pra fazer drill-down. O **Top 10** lista as maiores **categorias**
+  (soma + quantidade + ticket médio), não lançamentos individuais —
+  evita que uma categoria com muitas compras (ex.: Mercado) seja
+  subestimada na visão.
+- **Lançamentos** — tabela completa com filtros por pessoa, conta,
+  categoria, tipo, mês, data e busca por descrição. Export CSV.
+- **Faturas** — uma linha por PDF importado, drill-down nos lançamentos
+  da fatura selecionada.
+- **Categorias** — mesmo toggle **Ano × Mensal** do Dashboard,
+  filtrando o resumo de categorias e o top "Outros Gastos" pelo
+  período escolhido. Inclui editor de categorias, overrides ativos,
+  override manual e botão de re-categorizar histórico (essa última
+  ação é global, ignora o filtro).
+- **Importar** — dois blocos:
+  1. **PDFs de fatura**: uploader pra enviar um ou mais PDFs (mesma
+     lógica do CLI `gastometro`). Checkboxes pra arquivar em
+     `entrada/` e regenerar o Excel.
+  2. **Planilha familiar (Google Sheets)**: cola a URL pública da
+     planilha uma vez (Compartilhar → "Qualquer pessoa com o link
+     pode ver") e dali pra frente é um clique no botão
+     **🔄 Atualizar do Google Sheets** — baixa o XLSX e roda o
+     importador idempotente.
+  O bloco de PDFs também aparece num expander no topo da página
+  **Faturas**.
+
+### Persistência dos filtros (URL + sessão)
+
+Os filtros não somem mais quando você troca de página ou recarrega
+o browser. Funciona em dois níveis:
+
+- **Globais** (compartilhados entre Dashboard, Categorias e
+  Lançamentos): `ano`, `mês` e `modo` (Anual/Mensal). Setou em uma
+  página → todas as outras já abrem com o mesmo recorte.
+- **Por página** (Lançamentos): `pessoa`, `conta`, `categoria`,
+  `tipo`, `referência`, `busca` ficam memorizados na **própria**
+  página.
+
+Tudo viaja na URL (`?ano=2024&mes=2024-05&modo=Mensal&lanc_pessoas=Eliabe%20Gai|Ana`),
+então:
+
+- F5 / fechar e abrir o browser preserva os filtros.
+- Você pode **compartilhar um link** com filtros já aplicados (ex.:
+  mandar pra esposa "olha o consumo de maio").
+- Cada página tem um botão **🧹 Limpar filtros** (no topo do
+  Dashboard/Categorias, no rodapé da sidebar em Lançamentos) que
+  volta tudo ao default.
+
+A UI sempre lê do banco em `dados/gastometro.db`. Se você ainda não
+populou, rode antes:
+
+```bash
+gastometro                                # processa PDFs em entrada/
+python -m imports.migrar_excel_legado     # importa saida/gastometro.xlsx histórico
+python -m imports.importar_planilha_familiar  # importa despesas_Eliabe_Ana.xlsx (Total)
+```
+
+## Importação da planilha familiar (Fase 3)
+
+O script `imports/importar_planilha_familiar.py` lê a aba **Total** da
+`despesas_Eliabe_Ana.xlsx` (layout pivotado: categorias nas linhas,
+meses/anos nas colunas) e gera 1 lançamento por célula no banco.
+
+```bash
+python -m imports.importar_planilha_familiar
+# ou apontando pra outro arquivo:
+python -m imports.importar_planilha_familiar caminho/da/planilha.xlsx
+```
+
+Regras aplicadas durante o import:
+
+- **Linhas de soma ignoradas**: `Total Gastos`, `Saldo`, `Défice |
+  Superávit`, `Poupança`, `Meta`, `Dízimos` (soma de Eliabe+Ana),
+  `Faculdade` (igual à linha Uninter detalhada), `Outros` (soma da
+  seção de despesas diversas).
+- **Regra anti-PDF**: linhas "Cartão de Crédito - Viacredi/Nubank
+  Eliabe" e "Cartão de Crédito - Nubank Ana" pulam meses onde já
+  existe a fatura PDF correspondente (o PDF tem o detalhe granular).
+- **Receitas**: linhas `Ganhos Eliabe`, `Ganhos Ana Letícia` e
+  `Empréstimo` viram `tipo='receita'` com categorias `Salário` /
+  `Empréstimo Recebido`.
+- **Idempotência**: hash determinístico por `(descrição canônica,
+  ano, mês, pessoa)`. Reimport não duplica.
+- **Data**: como a planilha tem só mês/ano, fixa no 1º dia do mês de
+  referência (`YYYY-MM-01`).
+
+Pra incluir uma linha nova da planilha, edite o dicionário `CONFIG`
+em `imports/importar_planilha_familiar.py`.
+
+## Sincronização com Google Sheets
+
+Pra continuar atualizando a planilha familiar no Google Sheets e
+puxar pro banco com um clique:
+
+1. No Google Sheets, abra a planilha → **Compartilhar** → mude o
+   acesso pra "Qualquer pessoa com o link" (pode ser só
+   visualização — não precisa de edição).
+2. Copie a URL da barra de endereços (qualquer formato funciona —
+   o script extrai o ID automaticamente).
+3. Cole a URL no campo da página **Importar** (Streamlit) e
+   clique em **🔄 Atualizar do Google Sheets**. A URL fica salva
+   em `dados/planilha_url.txt` (gitignored) — nas próximas vezes
+   é só clicar no botão.
+
+Ou via CLI:
+
+```bash
+# 1ª vez (informa a URL — fica salva):
+python -m imports.baixar_planilha_familiar "https://docs.google.com/spreadsheets/d/.../edit"
+
+# Próximas vezes:
+python -m imports.baixar_planilha_familiar
+python -m imports.importar_planilha_familiar dados/planilha_familiar_baixada.xlsx
+```
+
+Alternativa via env var: defina `GASTOMETRO_PLANILHA_URL` no `.envrc`
+(direnv) ou `.env` e o script lê automaticamente.
+
+Como o importador é **idempotente** (hash determinístico por
+descrição+ano+mês+pessoa), você pode re-baixar quantas vezes quiser —
+só os valores novos/alterados entram. Linhas duplicadas viram
+"skip" silencioso.
+
+## Rodar com Docker (full-time em qualquer máquina)
+
+Pra ter o app rodando 24/7 num mini-PC, Raspberry Pi, NAS ou Mac que
+fica sempre ligado — e poder acessar de outros PCs / celular via
+browser na mesma rede — basta o `docker-compose.yml` incluso.
+
+Pré-requisitos: [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+(Mac/Windows) ou Docker Engine + Compose (Linux).
+
+### Subir, parar, atualizar
+
+```bash
+# 1ª vez (build da imagem + sobe em background):
+docker compose up -d --build
+
+# Acompanhar logs:
+docker compose logs -f gastometro
+
+# Parar (preserva os volumes ./dados, ./entrada, ./saida):
+docker compose down
+
+# Atualizar após mexer no código:
+docker compose up -d --build
+
+# Status / saúde:
+docker compose ps
+```
+
+Depois de subir, acesse:
+
+- No host: `http://localhost:8501`
+- Em outros PCs/celular na mesma rede: `http://<ip-do-host>:8501`
+  (descubra o IP com `ipconfig getifaddr en0` no Mac ou
+  `hostname -I` no Linux).
+
+### Detalhes da arquitetura
+
+- **Imagem multi-arch**: `python:3.12-slim` cobre Mac (M1/M2/M3 arm64
+  e Intel amd64), Linux x86 e Raspberry Pi 4/5 (arm64) sem
+  configuração extra.
+- **Bind mounts** (3): `./dados → /data` (banco + backups), `./entrada
+  → /app/entrada` (PDFs arquivados pelo uploader) e `./saida →
+  /app/saida` (Excel acumulativo). Você vê e mexe nos arquivos
+  direto da pasta do projeto.
+- **Usuário não-root** (UID/GID 1000): casa com o dono do bind mount
+  em Linux/Mac. Pra ajustar ao seu UID real, rode
+  `APP_UID=$(id -u) APP_GID=$(id -g) docker compose up -d --build`.
+- **Schema automático**: `garantir_schema()` roda `alembic upgrade
+  head` no boot — primeira subida cria o banco do zero, subidas
+  seguintes são no-op.
+- **Restart automático**: `restart: unless-stopped` traz o app de
+  volta após reboot do host ou crash.
+- **Healthcheck**: bate em `/_stcore/health` a cada 30s. `docker
+  compose ps` mostra `(healthy)` quando tudo OK.
+
+### Variáveis de ambiente úteis
+
+Pode definir no `.env` da raiz (mesmo arquivo que o `direnv` usa):
+
+```bash
+# .env
+GASTOMETRO_PLANILHA_URL=https://docs.google.com/spreadsheets/d/.../edit
+GASTOMETRO_BACKUPS_KEEP=60         # default 30
+```
+
+### Backup off-site (opcional, com Litestream)
+
+Pra replicar o SQLite continuamente pra S3 / Backblaze B2 / MinIO,
+descomente o bloco `litestream:` do `docker-compose.yml` e siga as
+instruções inline. Aí restaurar em outro PC é um comando:
+
+```bash
+litestream restore -o dados/gastometro.db s3://meu-bucket/gastometro.db
+```
+
+### Expor o app pra fora da LAN (ngrok)
+
+Quando você quer ver os dados do celular no 4G, mostrar pra alguém
+fora de casa ou simplesmente acessar de outra cidade, dá pra
+tunelar via [ngrok](https://ngrok.com/) sem mexer no roteador. O
+service já está no `docker-compose.yml` atrás do **profile
+`ngrok`** — só sobe quando você pede explicitamente, então quem só
+roda local não precisa de token.
+
+**Setup (uma vez):**
+
+1. Crie conta grátis em <https://ngrok.com> (login com GitHub/Google).
+2. Pegue seu authtoken em
+   <https://dashboard.ngrok.com/get-started/your-authtoken>.
+3. (Opcional, recomendado) Reserve um domínio estático grátis em
+   <https://dashboard.ngrok.com/domains> — ex.: `gastometro.ngrok-free.app`.
+   Sem isso, a URL muda toda vez que o container reinicia.
+4. Copie `.env.example` pra `.env` e preencha:
+
+   ```bash
+   NGROK_AUTHTOKEN=2abc...XYZ
+   NGROK_DOMAIN=gastometro.ngrok-free.app
+   STREAMLIT_ENABLE_XSRF=false
+   STREAMLIT_ENABLE_CORS=false
+   ```
+
+   > **Por que desligar XSRF/CORS?** O Streamlit checa o `Host`
+   > header em uploads e websockets pra mitigar CSRF. Atrás de
+   > proxy, esse header vem do túnel (não do `localhost`), então a
+   > checagem falha — uploads quebram com erro de Axios e o
+   > websocket reconecta em loop. Desabilitar é seguro porque o
+   > acesso público fica protegido pelo próprio domínio único do
+   > ngrok (URL não-adivinhável); pra camadas extras, configure
+   > [Basic Auth no ngrok](https://ngrok.com/docs/http/traffic-policy/actions/basic-auth/)
+   > ou [OAuth](https://ngrok.com/docs/http/oauth/) no painel.
+
+5. Suba com o profile ativo:
+
+   ```bash
+   docker compose --profile ngrok up -d
+   ```
+
+6. Acesse:
+   - **URL pública**: `https://gastometro.ngrok-free.app`
+     (ou a URL aleatória que aparece no `docker compose logs ngrok`
+     se você não reservou domínio).
+   - **Painel local do ngrok**: <http://localhost:4040> — inspetor
+     de requests em tempo real, ótimo pra debug.
+
+**Comandos do dia a dia:**
+
+```bash
+# Subir app + túnel (1ª vez ou após mexer no docker-compose.yml):
+docker compose --profile ngrok up -d --build
+
+# Subir só o túnel (app já rodando):
+docker compose --profile ngrok up -d ngrok
+
+# Ver a URL pública (e confirmar que o domínio bateu):
+docker compose logs ngrok | grep -E "(started tunnel|url=)"
+#   ex.: started tunnel … url=https://gastometro.ngrok-free.app
+
+# Acompanhar logs ao vivo (Ctrl+C pra sair):
+docker compose logs -f ngrok
+
+# Status / saúde dos dois containers:
+docker compose --profile ngrok ps
+
+# Reiniciar só o túnel (após trocar NGROK_DOMAIN no .env, por ex.):
+docker compose --profile ngrok up -d --force-recreate ngrok
+
+# Pausar o túnel sem derrubar o app:
+docker compose stop ngrok
+
+# Religar o túnel pausado:
+docker compose start ngrok
+
+# Voltar a só rodar local (remove o container do ngrok de vez):
+docker compose --profile ngrok rm -sf ngrok
+
+# Derrubar tudo (app + túnel) preservando dados:
+docker compose --profile ngrok down
+```
+
+> Sempre que mexer no `.env` (token, domínio, flags do Streamlit) é
+> preciso `--force-recreate` (ou `down` + `up`) — `restart` sozinho
+> não relê o `.env`.
+
+## Mudar de PC / sincronizar 2 PCs
+
+Três abordagens, do melhor pro mais simples — escolha conforme a
+realidade do seu uso.
+
+### A. Servidor central + clientes web (recomendado)
+
+Suba o container Docker num PC/Mac/Raspberry/NAS que fica sempre
+ligado (seção acima). Os outros PCs **não rodam o app** — só abrem
+`http://<ip-do-servidor>:8501` no browser.
+
+- Vantagem: zero cópia de banco, zero risco de conflito, dados
+  sempre sincronizados.
+- Quando faz sentido: você tem uma máquina sempre ligada (Mac mini,
+  mini-PC, Raspberry Pi 4+).
+
+### B. Migração one-shot via `restaurar_banco`
+
+Quando trocar de notebook ou levar os dados pra outra máquina:
+
+```bash
+# No PC antigo, copie o banco:
+scp dados/gastometro.db usuario@novo-pc:~/backup_gastometro.db
+# (ou via AirDrop, pen drive, Drive…)
+
+# No PC novo, clone o repo, instale e restaure:
+git clone https://github.com/.../gastometro && cd gastometro
+pip install -r requirements.txt
+python -m scripts.restaurar_banco ~/backup_gastometro.db
+streamlit run app/streamlit_app.py # porta padrão 8501
+#ou
+streamlit run app/streamlit_app.py --server.port 8502
+```
+
+O `scripts/restaurar_banco.py`:
+
+- Valida que é um SQLite válido (header `SQLite format 3`).
+- Faz **backup automático** do banco atual (motivo
+  `pre_restauracao`) antes de sobrescrever — você pode reverter via
+  `dados/backups/`.
+- Roda `alembic upgrade head` no banco restaurado (útil se veio de
+  uma versão um pouco mais antiga do app).
+- Flags: `--destino <path>` muda o destino; `--sem-checagem` ignora
+  magic bytes; `--sem-migration` pula o Alembic.
+
+### C. Pasta `dados/` sincronizada via Drive/iCloud/Dropbox
+
+Use `GASTOMETRO_DADOS_DIR` (ou no Docker, mude o bind mount) pra
+apontar pra uma pasta sincronizada:
+
+```bash
+# Mac com iCloud Drive:
+export GASTOMETRO_DADOS_DIR="$HOME/Library/Mobile Documents/com~apple~CloudDocs/gastometro"
+```
+
+> **Aviso**: SQLite **não tolera escrita concorrente** num arquivo
+> sincronizado por cloud. Use essa abordagem só se você **nunca**
+> abre o app em dois PCs ao mesmo tempo. Se rolar conflito, o serviço
+> de sync vai criar `gastometro (conflicted copy).db` e você terá
+> que escolher manualmente qual versão manter.
+>
+> Pra uso simultâneo seguro, prefira a abordagem **A**.
+
+## Consolidar contas duplicadas
+
+Se você vier de uma versão antiga do projeto, talvez tenha no banco
+duplicatas tipo `Ailos Mastercard` (do seed antigo) **e** `Ailos —
+Eliabe Gai` (criada pelos parsers de PDF) — apontando pro mesmo
+cartão. O comando abaixo funde tudo no nome canônico (`{Banco} —
+{Titular}`), preservando os lançamentos da conta antiga:
+
+```bash
+python -m db.consolidar_contas
+```
+
+É idempotente — rodar várias vezes não muda nada depois da primeira
+execução. O `seed_inicial` já foi atualizado pra criar as contas
+diretamente no formato canônico, então **bancos novos não precisam
+desse passo**.
+
 ## Estrutura do projeto
 
 ```
 gastometro/
-├── entrada/               # coloque os PDFs aqui (gitignored)
-├── saida/                 # gastometro.xlsx é gerado aqui (gitignored)
-├── extrator.py            # CLI + exportador Excel acumulativo
-├── categorias.py          # regras de categorização
-├── parsers/
-│   ├── __init__.py        # detecção automática do banco
-│   ├── base.py            # tipos compartilhados + utilidades
-│   ├── ailos.py           # parser Ailos Mastercard
-│   ├── nubank.py          # parser Nubank
-│   └── banco_brasil.py    # parser Banco do Brasil (Ourocard)
-├── tests/                 # suite pytest (parse_valor_brl, categorias, inferencia)
-├── pyproject.toml         # config de build + ruff + mypy + pytest
+├── entrada/                       # coloque os PDFs aqui (gitignored)
+├── saida/                         # gastometro.xlsx é gerado aqui (gitignored)
+├── dados/                         # SQLite + backups + cache de URL (gitignored)
+├── extrator.py                    # CLI + orquestra DB + export Excel
+├── categorias.py                  # regras de categorização (fallback)
+├── parsers/                       # parsers por banco (PDF → Fatura)
+├── db/                            # SQLModel + Alembic + repo + backup + consolidação
+├── imports/                       # ETL: Excel legado + planilha familiar + Google Sheets
+├── export/                        # banco → Excel
+├── scripts/                       # CLIs utilitários (restaurar_banco, etc.)
+├── app/                           # UI Streamlit (Fase 2)
+│   ├── streamlit_app.py           # entrypoint
+│   ├── helpers.py                 # filtros, formato BR, cache
+│   ├── estado.py                  # persistência de filtros (session + URL)
+│   └── paginas/                   # dashboard, lancamentos, faturas, categorias, importar
+├── alembic/                       # migrations versionadas
+├── tests/                         # pytest (parsers, repo, export, app)
+├── Dockerfile                     # imagem multi-arch (amd64 + arm64)
+├── docker-compose.yml             # serviço gastometro + Litestream opcional
+├── .dockerignore                  # enxuga a imagem (sem .venv, dados, tests…)
+├── pyproject.toml                 # build + ruff + mypy + pytest
 ├── requirements.txt
-├── requirements-dev.txt   # requirements.txt + pytest + ruff + mypy
-├── README.md              # este arquivo
-└── MELHORIAS.md           # backlog vivo de melhorias (priorizado)
+├── requirements-dev.txt           # requirements.txt + pytest + ruff + mypy
+├── README.md                      # este arquivo
+└── MELHORIAS.md                   # backlog vivo de melhorias (priorizado)
 ```
 
 ## Testes, lint e tipos
@@ -450,7 +845,7 @@ O projeto usa `pytest`, `ruff` (lint + imports + upgrades) e `mypy`
 ```bash
 pip install -r requirements-dev.txt   # ou: pip install -e ".[dev]"
 
-python -m pytest                       # 109 testes
+python -m pytest                       # 223 testes (parsers + repo + export + app + planilha + consolidação + upload + sync + restore + filtros persistentes)
 ruff check .                           # lint
 ruff check . --fix                     # lint com auto-fix
 mypy .                                 # tipos

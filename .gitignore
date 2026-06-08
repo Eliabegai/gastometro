@@ -4,11 +4,16 @@ __pycache__/
 *$py.class
 *.egg-info/
 .pytest_cache/
+.cursor/*
 
 # Ambientes virtuais
 .venv/
 venv/
 env/
+
+# Banco local + backups (Fase 1 webapp)
+dados/
+saida/_pre_migracao/
 
 # Sistema
 .DS_Store
@@ -29,3 +34,9 @@ Thumbs.db
 
 # Overrides de categorização (podem conter descrições com dados sensíveis)
 categorias_usuario.json
+
+# Variáveis de ambiente (tokens ngrok, URLs privadas).
+# `.env.example` é commitado como template.
+.env
+.env.local
+!.env.example

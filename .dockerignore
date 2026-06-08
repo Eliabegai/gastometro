@@ -1,0 +1,53 @@
+# Ambientes virtuais e caches do Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Dados locais — viram bind mounts em runtime, não precisam ir pra imagem
+dados/
+entrada/
+saida/
+
+# Faturas e planilhas pessoais
+*.pdf
+*.xlsx
+
+# Git e CI
+.git/
+.gitignore
+.github/
+
+# Testes e exemplos — não precisam na imagem de produção
+tests/
+exemplos/
+
+# Documentação e dotfiles
+README.md
+MELHORIAS.md
+.editorconfig
+.envrc
+.env
+.env.*
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Histórico de agente do Cursor (caso por algum motivo apareça aqui)
+agent-transcripts/
+
+# Próprio Docker — evita auto-referência
+Dockerfile
+docker-compose.yml
+.dockerignore

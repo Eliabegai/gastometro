@@ -14,6 +14,11 @@ dependencies = [
     "pdfplumber>=0.11.0",
     "pandas>=2.2.0",
     "openpyxl>=3.1.0",
+    "sqlmodel>=0.0.22",
+    "alembic>=1.13",
+    "python-dotenv>=1.0",
+    "streamlit>=1.39",
+    "plotly>=5.24",
 ]
 
 [project.optional-dependencies]
@@ -30,8 +35,8 @@ gastometro = "extrator:main"
 py-modules = ["extrator", "categorias"]
 
 [tool.setuptools.packages.find]
-include = ["parsers*"]
-exclude = ["tests*", "entrada*", "saida*", "exemplos*"]
+include = ["parsers*", "db*", "imports*", "export*"]
+exclude = ["tests*", "entrada*", "saida*", "exemplos*", "alembic*", "dados*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -45,6 +50,8 @@ extend-exclude = [
     "entrada",
     "saida",
     "exemplos",
+    "dados",
+    "alembic/versions",
 ]
 
 [tool.ruff.lint]
@@ -71,7 +78,20 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_optional = true
 check_untyped_defs = true
+# Arquivos gerados pelo Alembic (alembic/versions/*) usam
+# `sqlmodel.sql.sqltypes.AutoString()` que mypy nao resolve. Saem do
+# check; sao revisados visualmente quando criados.
+exclude = ['alembic/versions/']
 
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+# SQLAlchemy 2.x + SQLModel emitem expressões cujo retorno o mypy resolve
+# como `bool` (overload das colunas tipadas), o que produz falsos
+# `arg-type` em joins/order_by e `assignment` em `obj.fk = relacionado.id`
+# (que volta `int | None`). Esses são padrões idiomáticos da lib;
+# ignoramos só nesse módulo pra não esconder bugs do resto do projeto.
+[[tool.mypy.overrides]]
+module = "db.repository"
+disable_error_code = ["arg-type", "assignment", "return-value", "call-overload"]

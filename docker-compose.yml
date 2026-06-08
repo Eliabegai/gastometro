@@ -1,0 +1,128 @@
+# docker-compose.yml — gastometro full-time
+#
+# Subir:    docker compose up -d
+# Parar:    docker compose down
+# Logs:     docker compose logs -f gastometro
+# Rebuild:  docker compose up -d --build
+# Status:   docker compose ps
+#
+# Volumes: usamos bind mounts pra que os arquivos (banco SQLite, PDFs
+# de entrada e Excel de saída) fiquem visíveis na pasta do projeto
+# no host. Isso facilita inspeção e backup.
+#
+# Acesso: http://localhost:8501 no próprio host;
+#         http://<ip-da-maquina>:8501 dos outros PCs/celular na LAN.
+
+services:
+  gastometro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Casa com o UID/GID do usuário no Mac/Linux (default 1000).
+        # No Mac, `id -u` costuma ser 501 — sobrescreva com:
+        # APP_UID=$(id -u) APP_GID=$(id -g) docker compose up -d --build
+        APP_UID: ${APP_UID:-1000}
+        APP_GID: ${APP_GID:-1000}
+    image: gastometro:latest
+    container_name: gastometro
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      # Banco e backups moram em /data (bind mount → ./dados).
+      GASTOMETRO_DADOS_DIR: /data
+      GASTOMETRO_BACKUPS_KEEP: "30"
+      # Timezone afeta carimbos de backup e timestamps na UI.
+      TZ: America/Sao_Paulo
+      # URL salva da planilha familiar (Google Sheets). Opcional —
+      # pode ser também colada na UI (fica em /data/planilha_url.txt).
+      GASTOMETRO_PLANILHA_URL: ${GASTOMETRO_PLANILHA_URL:-}
+      # XSRF/CORS do Streamlit precisam ficar **off** quando o app está
+      # atrás de um proxy/túnel (ngrok, Cloudflare Tunnel, Tailscale
+      # Funnel) — senão o `st.file_uploader` da página Importar quebra
+      # com erro de Axios e os websockets reconectam em loop. Default
+      # `true` (seguro p/ uso local); o `.env` ativa ngrok setando
+      # `STREAMLIT_ENABLE_XSRF=false`.
+      STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION: ${STREAMLIT_ENABLE_XSRF:-true}
+      STREAMLIT_SERVER_ENABLE_CORS: ${STREAMLIT_ENABLE_CORS:-true}
+    volumes:
+      # Banco + backups + cache da URL da planilha.
+      - ./dados:/data
+      # PDFs de fatura recebidos via uploader são arquivados aqui.
+      - ./entrada:/app/entrada
+      # Excel acumulativo regenerado pela UI / CLI.
+      - ./saida:/app/saida
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────
+  # ngrok — túnel público pra acessar o app fora da LAN (celular no
+  # 4G, outra cidade, demo p/ alguém). Ativa só quando o profile
+  # `ngrok` é passado, então quem só usa local não precisa de token:
+  #
+  #   docker compose --profile ngrok up -d
+  #
+  # Pré-requisitos no `.env` (na raiz do projeto):
+  #   NGROK_AUTHTOKEN=...          # https://dashboard.ngrok.com/get-started/your-authtoken
+  #   NGROK_DOMAIN=seu-app.ngrok-free.app   # domínio estático grátis
+  #   STREAMLIT_ENABLE_XSRF=false  # libera upload de PDFs via túnel
+  #   STREAMLIT_ENABLE_CORS=false  # libera websocket via túnel
+  #
+  # Painel local: http://localhost:4040 (inspeciona requisições em
+  # tempo real, útil pra debug). URL pública: o domínio configurado.
+  # ─────────────────────────────────────────────────────────────────
+  ngrok:
+    image: ngrok/ngrok:3
+    container_name: gastometro-ngrok
+    restart: unless-stopped
+    profiles: ["ngrok"]
+    depends_on:
+      gastometro:
+        condition: service_healthy
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    # `--url=` fixa o domínio estático (plano Free: 1 grátis).
+    # Sem `NGROK_DOMAIN`, ngrok cai pro modo URL aleatória (troca a
+    # cada subida) — útil pra testar antes de reservar domínio.
+    command: >
+      http
+      ${NGROK_DOMAIN:+--url=${NGROK_DOMAIN}}
+      gastometro:8501
+    ports:
+      # Painel web local do ngrok (inspector). Não exposto na LAN
+      # — só `127.0.0.1` pra evitar curiosos na rede.
+      - "127.0.0.1:4040:4040"
+
+  # ─────────────────────────────────────────────────────────────────
+  # Litestream (opcional) — replicação contínua do SQLite pra S3/B2.
+  #
+  # Pra ativar:
+  # 1. Descomente o bloco abaixo e o `litestream.yml` na raiz do
+  #    projeto (crie seguindo https://litestream.io/getting-started/).
+  # 2. Configure as credenciais no `.env` da raiz:
+  #       LITESTREAM_ACCESS_KEY_ID=...
+  #       LITESTREAM_SECRET_ACCESS_KEY=...
+  # 3. Rode `docker compose up -d`.
+  #
+  # Com Litestream, restaurar o banco em outro PC é um comando:
+  #   litestream restore -o dados/gastometro.db s3://bucket/gastometro.db
+  # ─────────────────────────────────────────────────────────────────
+  #
+  # litestream:
+  #   image: litestream/litestream:0.3
+  #   container_name: gastometro-litestream
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - gastometro
+  #   environment:
+  #     LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID}
+  #     LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY}
+  #   volumes:
+  #     - ./dados:/data
+  #     - ./litestream.yml:/etc/litestream.yml:ro
+  #   command: ["replicate"]
