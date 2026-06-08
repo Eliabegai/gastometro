@@ -32,13 +32,18 @@ from pathlib import Path
 from typing import Any
 
 import streamlit as st
+from sqlmodel import select
 
 from app.helpers import invalidar_cache
 from db.backup import fazer_backup
+from db.engine import get_session
+from db.models import Pessoa
 from db.repository import upsert_fatura
 from db.seed import seed_inicial
 from export.excel import regenerar_planilha_do_banco
 from parsers import extrair_fatura
+
+OPCAO_DETECTAR = "(detectar automaticamente pelo PDF)"
 
 RAIZ = Path(__file__).resolve().parents[2]
 PASTA_ENTRADA = RAIZ / "entrada"
@@ -58,7 +63,9 @@ def _nome_unico(destino_dir: Path, nome_original: str) -> Path:
     return destino_dir / f"{stem}__{carimbo}{suffix}"
 
 
-def _processar_um_pdf(pdf_path: Path) -> dict[str, Any]:
+def _processar_um_pdf(
+    pdf_path: Path, *, pessoa_override: str | None = None
+) -> dict[str, Any]:
     """Roda extrator + upsert em um PDF. Devolve dict com resumo."""
     resultado: dict[str, Any] = {
         "arquivo": pdf_path.name,
@@ -79,7 +86,7 @@ def _processar_um_pdf(pdf_path: Path) -> dict[str, Any]:
 
     meta = fatura.metadata
     resultado["banco"] = meta.banco or ""
-    resultado["titular"] = meta.titular or ""
+    resultado["titular"] = pessoa_override or meta.titular or ""
     resultado["referencia"] = meta.referencia_mes or ""
     resultado["transacoes"] = len(fatura.transacoes)
 
@@ -87,10 +94,28 @@ def _processar_um_pdf(pdf_path: Path) -> dict[str, Any]:
         resultado["status"] = "sem_transacoes"
         return resultado
 
-    _fat_id, inseridos = upsert_fatura(fatura, arquivo=pdf_path.name)
+    _fat_id, inseridos = upsert_fatura(
+        fatura, arquivo=pdf_path.name, pessoa_override=pessoa_override
+    )
     resultado["novos"] = inseridos
     resultado["status"] = "novo" if inseridos > 0 else "ja_no_banco"
     return resultado
+
+
+def _listar_pessoas_ativas() -> list[str]:
+    """Retorna nomes de Pessoas existentes no banco, ordenados alfabeticamente.
+
+    Usado pra popular o dropdown "Vincular a" no uploader. Inclui
+    apenas pessoas ativas — assim que o consolidador apagar
+    fantasmas/órfãs, elas somem do dropdown sem precisar mexer aqui.
+    """
+    with get_session() as session:
+        pessoas = session.exec(
+            select(Pessoa).where(Pessoa.ativo == True).order_by(Pessoa.nome)  # noqa: E712
+        ).all()
+        # Materializa dentro da sessão — `p.nome` lazy-loads e falharia
+        # com `DetachedInstanceError` depois do session fechar.
+        return [p.nome for p in pessoas]
 
 
 def _processar_uploads(
@@ -98,6 +123,7 @@ def _processar_uploads(
     *,
     arquivar: bool,
     regerar_xlsx: bool,
+    pessoa_override: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Processa cada upload. Devolve `(resultados, caminho_excel)`."""
     seed_inicial()
@@ -110,7 +136,7 @@ def _processar_uploads(
             PASTA_ENTRADA.mkdir(parents=True, exist_ok=True)
             destino = _nome_unico(PASTA_ENTRADA, upload.name)
             destino.write_bytes(upload.getvalue())
-            res = _processar_um_pdf(destino)
+            res = _processar_um_pdf(destino, pessoa_override=pessoa_override)
             res["destino"] = str(destino.relative_to(RAIZ))
         else:
             with tempfile.NamedTemporaryFile(
@@ -124,7 +150,9 @@ def _processar_uploads(
                 # drill-down/dedup amigável.
                 renomeado = tmp_path.with_name(upload.name)
                 shutil.move(tmp_path, renomeado)
-                res = _processar_um_pdf(renomeado)
+                res = _processar_um_pdf(
+                    renomeado, pessoa_override=pessoa_override
+                )
                 res["destino"] = "(temporário)"
             finally:
                 try:
@@ -197,6 +225,24 @@ def render_uploader(*, key_prefix: str = "uploader") -> None:
         key=f"{key_prefix}_files",
     )
 
+    pessoas = _listar_pessoas_ativas()
+    pessoa_escolhida = st.selectbox(
+        "Vincular PDF(s) a (opcional)",
+        options=[OPCAO_DETECTAR, *pessoas],
+        index=0,
+        help=(
+            "Quando o titular impresso no PDF difere da grafia já "
+            "cadastrada (ex.: PDF traz 'Ana Leticia Maciel Gai' mas o "
+            "banco tem 'Ana Leticia Silva Maciel'), selecione aqui pra "
+            "evitar criar uma pessoa e um cartão duplicados. Em "
+            "'detectar automaticamente', usamos o nome lido do PDF."
+        ),
+        key=f"{key_prefix}_pessoa",
+    )
+    pessoa_override = (
+        None if pessoa_escolhida == OPCAO_DETECTAR else pessoa_escolhida
+    )
+
     col_a, col_b = st.columns(2)
     with col_a:
         arquivar = st.checkbox(
@@ -231,6 +277,7 @@ def render_uploader(*, key_prefix: str = "uploader") -> None:
                 list(arquivos),
                 arquivar=arquivar,
                 regerar_xlsx=regerar_xlsx,
+                pessoa_override=pessoa_override,
             )
         invalidar_cache()
         _renderizar_resultados(resultados, caminho_excel)

@@ -324,6 +324,7 @@ def upsert_fatura(
     session: Session | None = None,
     respeitar_categoria_existente: bool = False,
     fonte: str = FONTE_PDF,
+    pessoa_override: str | None = None,
 ) -> tuple[int, int]:
     """Importa uma fatura PDF parseada para o banco.
 
@@ -340,6 +341,11 @@ def upsert_fatura(
         manuais que o usuário já tinha feito.
       - `fonte`: rótulo gravado em `lancamento.fonte`. Default `pdf_fatura`;
         a migração legada usa `excel_legado`.
+      - `pessoa_override`: nome de pessoa já existente no banco que deve
+        ser usada como dona da conta (ignora `meta.titular` do PDF).
+        Útil quando o PDF traz o titular com grafia diferente da que
+        já temos cadastrada — evita criar `Pessoa` duplicada e usa a
+        conta canônica `{banco} — {pessoa_override}` se existir.
     """
     if session is None:
         with get_session() as s:
@@ -349,6 +355,7 @@ def upsert_fatura(
                 session=s,
                 respeitar_categoria_existente=respeitar_categoria_existente,
                 fonte=fonte,
+                pessoa_override=pessoa_override,
             )
 
     meta = fatura_pdf.metadata
@@ -368,12 +375,18 @@ def upsert_fatura(
             )
         return existente.id, 0
 
+    # `pessoa_override` vence o `meta.titular` extraído do PDF — evita
+    # criar Pessoa nova quando o usuário já sabe a quem o cartão
+    # pertence (corrige divergência de grafia entre PDFs antigos/novos).
+    titular_efetivo = pessoa_override or meta.titular
     pessoa = (
-        _obter_ou_criar_pessoa(session, meta.titular)
-        if meta.titular
+        _obter_ou_criar_pessoa(session, titular_efetivo)
+        if titular_efetivo
         else None
     )
-    nome_conta = _identificador_cartao(meta.banco, meta.titular) or "Sem Cartão"
+    nome_conta = (
+        _identificador_cartao(meta.banco, titular_efetivo) or "Sem Cartão"
+    )
     conta = _obter_ou_criar_conta(
         session,
         nome=nome_conta,

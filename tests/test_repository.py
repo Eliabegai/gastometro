@@ -75,6 +75,41 @@ def test_upsert_fatura_grava_3_lancamentos(banco_temporario):
     assert df_fat["referencia_mes"].iloc[0] == "2026-05"
 
 
+def test_upsert_fatura_pessoa_override_vincula_a_existente(banco_temporario):
+    """`pessoa_override` força o cartão a ser vinculado a uma pessoa
+    existente, ignorando o titular do PDF. Evita criar `Pessoa`
+    duplicada quando o PDF traz a grafia errada."""
+    from sqlmodel import select as sql_select
+
+    from db.engine import get_session
+    from db.models import Pessoa
+    from db.repository import listar_faturas_df, upsert_fatura
+
+    # Pessoa canônica já existe.
+    with get_session() as s:
+        s.add(Pessoa(nome="Joao Silva Canonico"))
+
+    fat_id, inseridos = upsert_fatura(
+        _fatura_demo(),
+        arquivo="Fatura_Demo.pdf",
+        pessoa_override="Joao Silva Canonico",
+    )
+    assert fat_id is not None
+    assert inseridos == 3
+
+    df_fat = listar_faturas_df()
+    assert df_fat["pessoa"].iloc[0] == "Joao Silva Canonico"
+    assert df_fat["conta"].iloc[0] == "Demo — Joao Silva Canonico"
+
+    # `Pessoa(nome="Joao Silva")` do PDF NÃO foi criada — só a canônica
+    # sobrevive (+ as do seed_inicial).
+    with get_session() as s:
+        joao_pdf = s.exec(
+            sql_select(Pessoa).where(Pessoa.nome == "Joao Silva")
+        ).first()
+        assert joao_pdf is None
+
+
 def test_upsert_fatura_idempotente(banco_temporario):
     """Re-import da mesma fatura não duplica nada (re-run safe)."""
     from db.repository import (
