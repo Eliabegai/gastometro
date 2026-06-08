@@ -214,7 +214,9 @@ def test_dashboard_alterna_para_visao_mensal(banco_temporario) -> None:
     assert not at.exception
     # Ano (1) + Mês (1) = 2 selectboxes no modo mensal
     assert len(at.selectbox) == 2
-    assert len(at.metric) == 4
+    # 4 KPIs do topo (Despesas/Receitas/Saldo/Qtde) + 4 KPIs de grupos
+    # de despesa (Cartões/Financiamentos/Casa Fixa/Empréstimos).
+    assert len(at.metric) == 8
 
 
 def test_importar_pdf_via_uploader(banco_temporario, tmp_path) -> None:

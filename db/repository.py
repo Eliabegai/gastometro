@@ -766,6 +766,7 @@ def listar_lancamentos_df(
                     "tipo": lanc.tipo,
                     "categoria": cat.nome if cat else "",
                     "conta": conta.nome if conta else "",
+                    "conta_tipo": conta.tipo if conta else "",
                     "pessoa": pessoa.nome if pessoa else "",
                     "referencia_mes": referencia or "",
                     "parcela": parcela,

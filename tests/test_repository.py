@@ -503,3 +503,50 @@ def test_remover_lancamentos_planilha_por_descricao(banco_temporario):
     restantes = df[df["descricao"] == "Moradia (mensal)"]
     assert len(restantes) == 1
     assert restantes["fonte"].iloc[0] == FONTE_MANUAL
+
+
+
+def test_listar_lancamentos_df_inclui_conta_tipo(banco_temporario):
+    """`conta_tipo` precisa estar disponível pra o dashboard agrupar.
+
+    PDFs criam Conta com tipo `cartao_credito` automaticamente. Sem
+    essa coluna no DF, o KPI "Cartões de Crédito" não consegue somar
+    sem reconsultar o banco.
+    """
+    from db.repository import listar_lancamentos_df, upsert_fatura
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+    df = listar_lancamentos_df()
+    assert "conta_tipo" in df.columns
+    assert (df["conta_tipo"] == "cartao_credito").all()
+
+
+def test_planilha_lancamento_herda_conta_tipo_existente(banco_temporario):
+    """Quando a planilha referencia conta que já é cartão (criada pelo
+    PDF), o lançamento sintético vem com `conta_tipo=cartao_credito` —
+    necessário pro KPI Cartões somar as células de meses sem PDF."""
+    from db.models import FONTE_PLANILHA, TIPO_LANCAMENTO_DESPESA
+    from db.repository import (
+        listar_lancamentos_df,
+        upsert_fatura,
+        upsert_lancamento_manual,
+    )
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+    upsert_lancamento_manual(
+        descricao="Fatura Demo (mensal)",
+        valor=600.0,
+        ano=2026,
+        mes=4,  # ref diferente do PDF — sobrevive
+        categoria_nome="Cartão de Crédito",
+        pessoa_nome="Joao Silva",
+        conta_nome="Demo — Joao Silva",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+        chave_planilha="Fatura Demo (mensal)",
+        fonte=FONTE_PLANILHA,
+    )
+
+    df = listar_lancamentos_df()
+    planilha = df[df["fonte"] == FONTE_PLANILHA]
+    assert len(planilha) == 1
+    assert planilha["conta_tipo"].iloc[0] == "cartao_credito"

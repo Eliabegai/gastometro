@@ -254,6 +254,14 @@ LINHAS_IGNORADAS = {
     "saldo",         # linha 66
 }
 
+# Descrições canônicas (do `CONFIG` antes da linha entrar em
+# `LINHAS_IGNORADAS`) que devem ser purgadas a cada `migrar()` pra
+# limpar lançamentos legados criados em versões anteriores do código.
+# Idempotente: se nada existe, é no-op.
+DESCRICOES_OBSOLETAS: tuple[str, ...] = (
+    "Moradia (mensal)",
+)
+
 # Sentinel: `INDICE_OVERRIDE[i] = None` significa "ignore essa linha
 # específica mesmo que o nome esteja em CONFIG/LINHAS_IGNORADAS".
 _IGNORAR = "IGNORAR_ESSA_LINHA"
@@ -355,6 +363,7 @@ class Resultado:
     atualizados: int = 0
     duplicados: int = 0
     pulados_cartao_pdf: int = 0
+    obsoletos_removidos: int = 0
     total_valor: float = 0.0
     total_valor_atualizado: float = 0.0
 
@@ -396,6 +405,17 @@ def migrar(caminho: str | Path = "despesas_Eliabe_Ana.xlsx") -> Resultado:
     cols = _mapear_colunas(rows[3], rows[5])
     resultado = Resultado()
     arquivo_origem = caminho.name
+
+    # Limpa lançamentos de descrições que migraram pra LINHAS_IGNORADAS.
+    # Caso o usuário tenha rodado o import num release antigo (em outra
+    # máquina, via UI, etc.), essas linhas precisam sumir antes de
+    # processar — senão ficam órfãs duplicando os detalhes (ex.:
+    # "Moradia (mensal)" somando junto com Luz/Água/Internet).
+    from db.repository import remover_lancamentos_planilha_por_descricao
+    for desc_obsoleta in DESCRICOES_OBSOLETAS:
+        resultado.obsoletos_removidos += (
+            remover_lancamentos_planilha_por_descricao(desc_obsoleta)
+        )
 
     for linha_idx in range(6, len(rows)):
         linha = rows[linha_idx]
@@ -487,6 +507,7 @@ def _imprimir_relatorio(res: Resultado) -> None:
     print(f"  Lançamentos atualizados  : {res.atualizados}")
     print(f"  Inalterados (já no banco): {res.duplicados}")
     print(f"  Cartões pulados (PDF)    : {res.pulados_cartao_pdf}")
+    print(f"  Obsoletos removidos      : {res.obsoletos_removidos}")
     print(f"  Soma dos inseridos (R$)  : {res.total_valor:,.2f}")
     print(f"  Soma dos atualizados (R$): {res.total_valor_atualizado:,.2f}")
     print("=" * 60)

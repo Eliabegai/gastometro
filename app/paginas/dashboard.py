@@ -295,6 +295,105 @@ def _grafico_pizza_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAF
     st.plotly_chart(fig, use_container_width=True)
 
 
+# Grupos de despesa que o usuário acompanha com KPIs dedicados no
+# dashboard. Cada grupo soma uma fatia específica do total de despesas:
+#
+#   - Cartões de Crédito: tudo que passou por conta `cartao_credito`
+#     (tanto detalhe granular vindo dos PDFs quanto a célula agregada
+#     da planilha familiar pra cartões sem PDF).
+#   - Financiamentos: parcelas mensais de carro + casa.
+#   - Casa Fixa: contas recorrentes da residência (Luz/Água/Internet).
+#   - Empréstimos: parcelas + avulsos da categoria `Empréstimos`.
+#
+# `criterio(df)` recebe o recorte de despesas e devolve a soma do grupo.
+# Mantém o critério em um lugar só pra evitar drift entre KPIs e
+# eventuais drill-downs futuros.
+GRUPOS_DESPESA: tuple[tuple[str, str], ...] = (
+    ("Cartões de Crédito", "cartoes"),
+    ("Financiamentos", "financiamentos"),
+    ("Casa Fixa (Luz/Água/Internet)", "casa_fixa"),
+    ("Empréstimos", "emprestimos"),
+)
+
+CATEGORIAS_FINANCIAMENTOS = ("Financiamento Carro", "Financiamento Casa")
+CATEGORIAS_EMPRESTIMOS = ("Empréstimos",)
+
+# Para "Casa Fixa" e "Empréstimos" usamos prefixos de descrição em vez
+# de só categoria, pois o usuário costuma criar overrides que movem
+# essas linhas pra agregadores ("Luz - Celesc" → "Casa e Construção";
+# "Empréstimo Nubank (parcela)" → "Outros Gastos"). A descrição vinda
+# do import da planilha familiar é estável — Luz/Água/Internet sempre
+# começam com esse rótulo (Config em `imports/importar_planilha_familiar.py`).
+PREFIXOS_CASA_FIXA = ("luz", "água", "agua", "internet")
+PREFIXOS_EMPRESTIMOS = ("empréstimo", "emprestimo")
+
+
+def _normalizar_desc(serie: pd.Series) -> pd.Series:
+    """Lower + strip pra casar prefixos sem se preocupar com caixa."""
+    return serie.fillna("").astype(str).str.strip().str.lower()
+
+
+def _soma_grupo(df: pd.DataFrame, chave: str) -> float:
+    """Soma absoluta do grupo de despesa identificado por `chave`."""
+    if df.empty:
+        return 0.0
+    despesas = df[df["tipo"] == "despesa"]
+    if despesas.empty:
+        return 0.0
+    if chave == "cartoes":
+        # `conta_tipo` cobre PDFs (todas as compras passaram pelo cartão,
+        # independente da categoria que recebeu o detalhe) e a célula
+        # agregada da planilha familiar — desde que a conta tenha sido
+        # marcada como `cartao_credito` (vide migração no `_obter_ou_criar_conta`).
+        sub = despesas[despesas["conta_tipo"] == "cartao_credito"]
+    elif chave == "financiamentos":
+        # Financiamento é categoria limpa: a descrição também começa
+        # com o nome, então cat ∈ {Financiamento Carro/Casa} basta.
+        sub = despesas[despesas["categoria"].isin(CATEGORIAS_FINANCIAMENTOS)]
+    elif chave == "casa_fixa":
+        desc = _normalizar_desc(despesas["descricao"])
+        sub = despesas[desc.str.startswith(PREFIXOS_CASA_FIXA)]
+    elif chave == "emprestimos":
+        cat_match = despesas["categoria"].isin(CATEGORIAS_EMPRESTIMOS)
+        desc = _normalizar_desc(despesas["descricao"])
+        desc_match = desc.str.startswith(PREFIXOS_EMPRESTIMOS)
+        sub = despesas[cat_match | desc_match]
+    else:
+        return 0.0
+    if sub.empty:
+        return 0.0
+    return float(sub["valor"].abs().sum())
+
+
+def _kpis_grupos_despesa(
+    df_periodo: pd.DataFrame, *, titulo_periodo: str
+) -> None:
+    """Renderiza 4 KPIs (cartões, financiamentos, casa fixa, empréstimos).
+
+    Mostra o total de cada grupo + a participação % nas despesas do
+    recorte. Útil pra o usuário saber rapidamente "quanto tá saindo
+    pra cada bucket grande" sem precisar abrir o detalhe.
+    """
+    if df_periodo.empty:
+        return
+    despesa_total = _soma_por_tipo(df_periodo, "despesa")
+    if despesa_total <= 0:
+        return
+
+    st.subheader(f"Despesas agrupadas — {titulo_periodo}")
+    cols = st.columns(len(GRUPOS_DESPESA))
+    for col, (rotulo, chave) in zip(cols, GRUPOS_DESPESA, strict=True):
+        total = _soma_grupo(df_periodo, chave)
+        pct = (total / despesa_total) * 100.0 if despesa_total else 0.0
+        _kpi_card(
+            col,
+            rotulo,
+            formatar_brl(total),
+            delta=f"{pct:.1f}% das despesas",
+            delta_color="off",
+        )
+
+
 def _top_categorias_periodo(
     df: pd.DataFrame, top_n: int = 10, *, titulo_periodo: str
 ) -> None:
@@ -509,6 +608,7 @@ def render() -> None:
         _grafico_pizza_categorias(df_fluxo)
 
     st.divider()
+    _kpis_grupos_despesa(df_fluxo, titulo_periodo=titulo_periodo)
     _top_categorias_periodo(df_fluxo, titulo_periodo=titulo_periodo)
 
     # Persiste filtros globais na URL (idempotente). Roda no fim do

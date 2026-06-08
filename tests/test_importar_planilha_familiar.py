@@ -309,3 +309,43 @@ def test_linha_moradia_e_ignorada(tmp_path: Path, banco_temporario) -> None:
     assert res.linhas_ignoradas == 1
     df = listar_lancamentos_df()
     assert df.empty or "Moradia" not in df["descricao"].tolist()
+
+
+def test_migrar_purga_descricoes_obsoletas(tmp_path: Path, banco_temporario) -> None:
+    """`migrar()` apaga lançamentos legados de descrições que migraram
+    pra `LINHAS_IGNORADAS` (caso clássico: 'Moradia (mensal)' que era
+    inserida em versões antigas e agora é redundante)."""
+    from db.models import FONTE_PLANILHA, TIPO_LANCAMENTO_DESPESA
+    from db.repository import (
+        listar_lancamentos_df,
+        upsert_lancamento_manual,
+    )
+    from imports.importar_planilha_familiar import migrar
+
+    upsert_lancamento_manual(
+        descricao="Moradia (mensal)",
+        valor=400.0,
+        ano=2025,
+        mes=5,
+        categoria_nome="Moradia",
+        chave_planilha="Moradia (mensal)",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+        fonte=FONTE_PLANILHA,
+    )
+    upsert_lancamento_manual(
+        descricao="Moradia (mensal)",
+        valor=420.0,
+        ano=2025,
+        mes=6,
+        categoria_nome="Moradia",
+        chave_planilha="Moradia (mensal)",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+        fonte=FONTE_PLANILHA,
+    )
+
+    xlsx = _planilha_sintetica(tmp_path / "sintetica.xlsx")
+    res = migrar(xlsx)
+
+    assert res.obsoletos_removidos == 2
+    df = listar_lancamentos_df()
+    assert (df["descricao"] == "Moradia (mensal)").sum() == 0
