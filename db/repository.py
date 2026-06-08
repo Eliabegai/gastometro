@@ -37,6 +37,7 @@ from db.models import (
     Lancamento,
     OverrideCategoria,
     Pessoa,
+    _agora_utc,
 )
 from parsers.base import (
     Fatura as FaturaParser,
@@ -523,6 +524,35 @@ def limpar_planilha_quando_pdf_existe(
     }
 
 
+def remover_lancamentos_planilha_por_descricao(
+    descricao: str, *, session: Session | None = None
+) -> int:
+    """Apaga todos os lançamentos de fonte planilha com a `descricao` dada.
+
+    Usado depois de adicionar uma linha em
+    `imports.importar_planilha_familiar.LINHAS_IGNORADAS` pra limpar
+    valores que já foram persistidos antes da regra entrar em vigor
+    (ex.: linha agregada "Moradia (mensal)" que duplicava
+    Luz/Água/Internet).
+
+    Devolve a quantidade de lançamentos removidos.
+    """
+    if session is None:
+        with get_session() as s:
+            return remover_lancamentos_planilha_por_descricao(
+                descricao, session=s
+            )
+
+    stmt = select(Lancamento).where(
+        Lancamento.fonte == FONTE_PLANILHA,
+        Lancamento.descricao == descricao,
+    )
+    alvos = session.exec(stmt).all()
+    for lanc in alvos:
+        session.delete(lanc)
+    return len(alvos)
+
+
 def existe_fatura_pdf(
     *,
     conta_nome: str,
@@ -572,7 +602,7 @@ def upsert_lancamento_manual(
     fonte: str = FONTE_PLANILHA,
     arquivo_origem: str | None = None,
     session: Session | None = None,
-) -> tuple[int | None, bool]:
+) -> tuple[int | None, bool, bool]:
     """Insere um lançamento sintético (planilha mensal / entrada manual).
 
     Diferente de `upsert_fatura`, aqui cada linha é independente: não
@@ -584,8 +614,15 @@ def upsert_lancamento_manual(
     mês, pessoa)`. Se `chave_planilha` não for passada, usa
     `descricao` como chave.
 
-    Devolve `(lancamento_id, inserido_agora)`. Quando já existe, o
-    retorno é `(id_existente, False)`.
+    Quando já existe linha com o mesmo hash:
+      - Se o valor diverge, faz UPDATE no `valor` (e `atualizado_em`)
+        — permite refletir edições do usuário na planilha em re-imports.
+        Categoria, override e demais campos são preservados.
+      - Se o valor bate, é no-op.
+
+    Devolve `(lancamento_id, inserido_agora, atualizado_agora)`. Os
+    bools são mutuamente exclusivos: `(True, False)` = linha nova,
+    `(False, True)` = update de valor, `(False, False)` = no-op.
     """
     if session is None:
         with get_session() as s:
@@ -613,11 +650,21 @@ def upsert_lancamento_manual(
         pessoa_nome=pessoa_nome,
     )
 
+    valor_dec = _arred(valor)
     existente = session.exec(
         select(Lancamento).where(Lancamento.hash_dedupe == h)
     ).first()
     if existente is not None:
-        return existente.id, False
+        # Re-import com valor alterado na planilha: atualiza só o
+        # valor (e timestamp). Categoria/override/conta/pessoa ficam
+        # como estão — o usuário pode ter ajustado manualmente.
+        valor_novo = abs(valor_dec)
+        if Decimal(existente.valor) != valor_novo:
+            existente.valor = valor_novo
+            existente.atualizado_em = _agora_utc()
+            session.add(existente)
+            return existente.id, False, True
+        return existente.id, False, False
 
     pessoa = (
         _obter_ou_criar_pessoa(session, pessoa_nome)
@@ -635,7 +682,6 @@ def upsert_lancamento_manual(
         session, nome=categoria_nome, tipo=categoria_tipo
     )
 
-    valor_dec = _arred(valor)
     data_ref = date(ano, mes, 1)
     referencia = f"{ano:04d}-{mes:02d}"
 
@@ -658,7 +704,7 @@ def upsert_lancamento_manual(
     )
     session.add(lanc)
     session.flush()
-    return lanc.id, True
+    return lanc.id, True, False
 
 
 def _parse_parcela(texto: str | None) -> tuple[int | None, int | None]:

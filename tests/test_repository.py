@@ -382,3 +382,124 @@ def test_limpar_planilha_quando_pdf_existe_backfill(banco_temporario):
     # Idempotência: 2ª chamada não remove nada.
     resultado2 = limpar_planilha_quando_pdf_existe()
     assert resultado2["lancamentos_removidos"] == 0
+def test_upsert_lancamento_manual_atualiza_valor_quando_diverge(banco_temporario):
+    """Re-import da planilha com valor alterado faz UPDATE no banco.
+
+    Cenário real: usuário edita uma célula da planilha familiar (ex.
+    descobre o valor exato do mês, atualiza de 400 → 450) e roda o
+    import de novo. Antes da correção, hash batia e a linha era
+    pulada — o banco continuava com o valor antigo. Agora atualiza.
+    """
+    from db.models import TIPO_LANCAMENTO_DESPESA
+    from db.repository import listar_lancamentos_df, upsert_lancamento_manual
+
+    _, inserido1, atualizado1 = upsert_lancamento_manual(
+        descricao="Luz - Celesc",
+        valor=170.0,
+        ano=2026,
+        mes=6,
+        categoria_nome="Luz",
+        chave_planilha="Luz - Celesc",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+    )
+    assert inserido1 is True
+    assert atualizado1 is False
+
+    _, inserido2, atualizado2 = upsert_lancamento_manual(
+        descricao="Luz - Celesc",
+        valor=199.90,
+        ano=2026,
+        mes=6,
+        categoria_nome="Luz",
+        chave_planilha="Luz - Celesc",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+    )
+    assert inserido2 is False  # não é "novo"
+    assert atualizado2 is True  # valor mudou → update
+
+    df = listar_lancamentos_df()
+    luz = df[df["descricao"] == "Luz - Celesc"]
+    assert len(luz) == 1
+    assert float(luz["valor"].iloc[0]) == 199.90
+
+
+def test_upsert_lancamento_manual_preserva_categoria_em_update(banco_temporario):
+    """UPDATE no valor não derruba override de categoria existente."""
+    from db.models import TIPO_LANCAMENTO_DESPESA
+    from db.repository import (
+        listar_lancamentos_df,
+        salvar_override,
+        upsert_lancamento_manual,
+    )
+
+    upsert_lancamento_manual(
+        descricao="Internet - Unifique",
+        valor=120.0,
+        ano=2026,
+        mes=6,
+        categoria_nome="Outros Gastos",
+        chave_planilha="Internet - Unifique",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+    )
+    # User customiza a categoria manualmente.
+    salvar_override("Internet - Unifique", "Internet")
+    from db.repository import recategorizar_todos
+
+    recategorizar_todos()
+
+    # Re-import com valor novo: categoria customizada precisa ficar.
+    upsert_lancamento_manual(
+        descricao="Internet - Unifique",
+        valor=159.90,
+        ano=2026,
+        mes=6,
+        categoria_nome="Outros Gastos",
+        chave_planilha="Internet - Unifique",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+    )
+
+    df = listar_lancamentos_df()
+    linha = df[df["descricao"] == "Internet - Unifique"]
+    assert float(linha["valor"].iloc[0]) == 159.90
+    assert linha["categoria"].iloc[0] == "Internet"
+
+
+def test_remover_lancamentos_planilha_por_descricao(banco_temporario):
+    """Helper limpa só fonte=planilha com a descrição exata."""
+    from db.models import FONTE_MANUAL, FONTE_PLANILHA, TIPO_LANCAMENTO_DESPESA
+    from db.repository import (
+        listar_lancamentos_df,
+        remover_lancamentos_planilha_por_descricao,
+        upsert_lancamento_manual,
+    )
+
+    for mes in (3, 4, 5):
+        upsert_lancamento_manual(
+            descricao="Moradia (mensal)",
+            valor=400.0,
+            ano=2026,
+            mes=mes,
+            categoria_nome="Moradia",
+            chave_planilha="Moradia (mensal)",
+            tipo=TIPO_LANCAMENTO_DESPESA,
+            fonte=FONTE_PLANILHA,
+        )
+    # Lançamento manual com mesma descrição tem que sobreviver.
+    upsert_lancamento_manual(
+        descricao="Moradia (mensal)",
+        valor=50.0,
+        ano=2026,
+        mes=6,
+        categoria_nome="Moradia",
+        chave_planilha="ajuste-manual",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+        fonte=FONTE_MANUAL,
+    )
+
+    removidos = remover_lancamentos_planilha_por_descricao("Moradia (mensal)")
+    assert removidos == 3
+
+    df = listar_lancamentos_df()
+    restantes = df[df["descricao"] == "Moradia (mensal)"]
+    assert len(restantes) == 1
+    assert restantes["fonte"].iloc[0] == FONTE_MANUAL

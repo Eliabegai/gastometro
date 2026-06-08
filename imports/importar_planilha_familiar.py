@@ -84,9 +84,6 @@ class LinhaConfig:
 # planilhador. Comentários indicam a linha original do arquivo de
 # referência (despesas_Eliabe_Ana.xlsx).
 CONFIG: dict[str, LinhaConfig] = {
-    "moradia": LinhaConfig(
-        descricao="Moradia (mensal)", categoria="Moradia",
-    ),
     "luz - celesc": LinhaConfig(
         descricao="Luz - Celesc", categoria="Luz",
     ),
@@ -245,6 +242,8 @@ CONFIG: dict[str, LinhaConfig] = {
 # `INDICE_OVERRIDE` abaixo pra desambiguar pela posição na planilha.
 LINHAS_IGNORADAS = {
     "descrição",
+    "moradia",       # agregado que já contém Luz/Água/Internet — somar
+                     # tudo duplica o gasto. Mantemos só os detalhes.
     "dízimos",       # linha 17: soma de Eliabe + Ana (usamos 18/19)
     "faculdade",     # linha 20: igual à 21 'Faculdade - Uninter'
     "poupança",      # linha 54: saldo acumulado, não fluxo mensal
@@ -353,9 +352,11 @@ class Resultado:
     linhas_desconhecidas: list[str] = None  # type: ignore[assignment]
     celulas_lidas: int = 0
     inseridos: int = 0
+    atualizados: int = 0
     duplicados: int = 0
     pulados_cartao_pdf: int = 0
     total_valor: float = 0.0
+    total_valor_atualizado: float = 0.0
 
     def __post_init__(self) -> None:
         if self.linhas_desconhecidas is None:
@@ -442,7 +443,7 @@ def migrar(caminho: str | Path = "despesas_Eliabe_Ana.xlsx") -> Resultado:
                 resultado.pulados_cartao_pdf += 1
                 continue
 
-            _, inserido = upsert_lancamento_manual(
+            _, inserido, atualizado = upsert_lancamento_manual(
                 descricao=conf.descricao,
                 valor=valor,
                 ano=ano,
@@ -464,6 +465,9 @@ def migrar(caminho: str | Path = "despesas_Eliabe_Ana.xlsx") -> Resultado:
             if inserido:
                 resultado.inseridos += 1
                 resultado.total_valor += valor
+            elif atualizado:
+                resultado.atualizados += 1
+                resultado.total_valor_atualizado += valor
             else:
                 resultado.duplicados += 1
 
@@ -480,9 +484,11 @@ def _imprimir_relatorio(res: Resultado) -> None:
     print(f"  Linhas desconhecidas     : {len(res.linhas_desconhecidas)}")
     print(f"  Células com valor        : {res.celulas_lidas}")
     print(f"  Lançamentos inseridos    : {res.inseridos}")
-    print(f"  Duplicados (já no banco) : {res.duplicados}")
+    print(f"  Lançamentos atualizados  : {res.atualizados}")
+    print(f"  Inalterados (já no banco): {res.duplicados}")
     print(f"  Cartões pulados (PDF)    : {res.pulados_cartao_pdf}")
     print(f"  Soma dos inseridos (R$)  : {res.total_valor:,.2f}")
+    print(f"  Soma dos atualizados (R$): {res.total_valor_atualizado:,.2f}")
     print("=" * 60)
 
     if res.linhas_desconhecidas:

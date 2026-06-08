@@ -51,8 +51,8 @@ def _planilha_sintetica(path: Path) -> Path:
     for i, m in enumerate(meses):
         ws.cell(row=6, column=2 + i, value=m)
 
-    # linha 7 (idx 6): 'Moradia'  — despesa, todos os meses 100.00
-    ws.cell(row=7, column=1, value="Moradia")
+    # linha 7 (idx 6): 'Internet - Unifique' — despesa, todos os meses 100.00
+    ws.cell(row=7, column=1, value="Internet - Unifique")
     for i in range(12):
         ws.cell(row=7, column=2 + i, value=100.00)
 
@@ -105,7 +105,7 @@ def test_planilha_sintetica_imports_corretamente(
     xlsx = _planilha_sintetica(tmp_path / "sintetica.xlsx")
     res = migrar(xlsx)
 
-    # Linhas mapeadas: Moradia, Luz, Cartão Nubank Eliabe, Ganhos Eliabe = 4
+    # Linhas mapeadas: Internet, Luz, Cartão Nubank Eliabe, Ganhos Eliabe = 4
     assert res.linhas_processadas == 4
     # Total Gastos + Saldo = 2 ignoradas
     assert res.linhas_ignoradas == 2
@@ -115,7 +115,7 @@ def test_planilha_sintetica_imports_corretamente(
         "Categoria Inexistente XYZ",
     ]
 
-    # Inseridos: 12 (Moradia) + 2 (Luz, sem o '-') + 3 (Cartão) + 2 (Ganhos) = 19
+    # Inseridos: 12 (Internet) + 2 (Luz, sem o '-') + 3 (Cartão) + 2 (Ganhos) = 19
     assert res.inseridos == 19
     assert res.duplicados == 0
     assert res.pulados_cartao_pdf == 0
@@ -214,11 +214,11 @@ def test_data_no_primeiro_dia_do_mes(
     migrar(xlsx)
 
     df = listar_lancamentos_df()
-    moradia = df[df["descricao"] == "Moradia (mensal)"]
-    assert len(moradia) == 12
+    internet = df[df["descricao"] == "Internet - Unifique"]
+    assert len(internet) == 12
     # Datas: 2025-01-01, 2025-02-01, ..., 2025-12-01
     datas_esperadas = {date(2025, m, 1) for m in range(1, 13)}
-    assert set(moradia["data"]) == datas_esperadas
+    assert set(internet["data"]) == datas_esperadas
 
 
 def test_planilha_real_outros_como_receita(banco_temporario) -> None:
@@ -275,3 +275,37 @@ def test_linhas_de_soma_sao_ignoradas(
     assert res.inseridos == 0
     assert res.linhas_processadas == 0
     assert res.linhas_ignoradas == 1
+
+
+def test_linha_moradia_e_ignorada(tmp_path: Path, banco_temporario) -> None:
+    """A linha 'Moradia' é redundante (agrega Luz/Água/Internet); ignorar."""
+    import openpyxl
+
+    from db.repository import listar_lancamentos_df
+    from imports.importar_planilha_familiar import migrar
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Total"
+    ws.cell(row=1, column=1, value="ANO 2025")
+    ws.cell(row=4, column=1, value="Descrição")
+    ws.cell(row=4, column=2, value=2025)
+    ws.cell(row=5, column=1, value="Mês/Ano")
+    meses = [
+        "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+    ]
+    for i, m in enumerate(meses):
+        ws.cell(row=6, column=2 + i, value=m)
+    ws.cell(row=7, column=1, value="Moradia")
+    for i in range(12):
+        ws.cell(row=7, column=2 + i, value=100.00)
+
+    xlsx = tmp_path / "so_moradia.xlsx"
+    wb.save(xlsx)
+    res = migrar(xlsx)
+
+    assert res.inseridos == 0
+    assert res.linhas_ignoradas == 1
+    df = listar_lancamentos_df()
+    assert df.empty or "Moradia" not in df["descricao"].tolist()
