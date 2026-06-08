@@ -356,6 +356,15 @@ def upsert_fatura(
         select(Fatura).where(Fatura.arquivo == arquivo)
     ).first()
     if existente is not None:
+        # Defensivo: planilha pode ter sido importada DEPOIS do PDF
+        # original (re-import da planilha familiar com janela maior).
+        # Limpa duplicatas a cada execução — idempotente.
+        if existente.referencia_mes:
+            _remover_planilha_duplicada(
+                session,
+                conta_id=existente.conta_id,
+                referencia=existente.referencia_mes,
+            )
         return existente.id, 0
 
     pessoa = (
@@ -388,6 +397,16 @@ def upsert_fatura(
     )
     session.add(fatura)
     session.flush()
+
+    # Cenário-chave do bug de duplicação: planilha familiar foi
+    # importada ANTES desse PDF chegar. A regra de skip no
+    # `importar_planilha_familiar` só atua na direção contrária —
+    # aqui fechamos o outro lado, removendo a célula agregada da
+    # planilha pra mesma (conta, referência).
+    if referencia:
+        _remover_planilha_duplicada(
+            session, conta_id=conta.id, referencia=referencia
+        )
 
     overrides = _cache_overrides(session)
 
@@ -445,6 +464,63 @@ def upsert_fatura(
         inseridos += 1
 
     return fatura.id, inseridos
+
+
+def _remover_planilha_duplicada(
+    session: Session, *, conta_id: int, referencia: str
+) -> int:
+    """Apaga lançamentos da planilha familiar que duplicam um PDF.
+
+    Regra de negócio (definida pelo usuário):
+      - A importação PDF traz o detalhe granular do que foi gasto.
+      - A célula da planilha traz o agregado mensal pra controle.
+      - Quando ambos coexistem pra mesma (conta, referência), o PDF
+        vence — somar os dois infla o total.
+
+    Removemos apenas linhas com `fonte == FONTE_PLANILHA`. Lançamentos
+    manuais e PDFs nunca são tocados.
+    """
+    if not referencia:
+        return 0
+    stmt = select(Lancamento).where(
+        Lancamento.conta_id == conta_id,
+        Lancamento.referencia_mes == referencia,
+        Lancamento.fonte == FONTE_PLANILHA,
+    )
+    duplicados = session.exec(stmt).all()
+    for lanc in duplicados:
+        session.delete(lanc)
+    return len(duplicados)
+
+
+def limpar_planilha_quando_pdf_existe(
+    session: Session | None = None,
+) -> dict[str, int]:
+    """Backfill: percorre todas as Faturas PDF e remove planilha duplicada.
+
+    Útil pra corrigir bancos antigos onde a planilha foi importada
+    antes dos PDFs (a regra de dedup do `importar_planilha_familiar`
+    só atua na direção planilha→PDF). Idempotente: rodar de novo não
+    faz nada.
+
+    Devolve `{"faturas_examinadas": N, "lancamentos_removidos": M}`.
+    """
+    if session is None:
+        with get_session() as s:
+            return limpar_planilha_quando_pdf_existe(session=s)
+
+    removidos = 0
+    faturas = session.exec(select(Fatura)).all()
+    for fat in faturas:
+        if not fat.referencia_mes:
+            continue
+        removidos += _remover_planilha_duplicada(
+            session, conta_id=fat.conta_id, referencia=fat.referencia_mes
+        )
+    return {
+        "faturas_examinadas": len(faturas),
+        "lancamentos_removidos": removidos,
+    }
 
 
 def existe_fatura_pdf(

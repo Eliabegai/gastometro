@@ -226,3 +226,159 @@ def test_parse_referencia_iso(iso, esperado):
     from db.repository import parse_referencia
 
     assert parse_referencia(iso) == esperado
+def test_upsert_fatura_remove_planilha_duplicada(banco_temporario):
+    """Importar PDF DEPOIS da planilha familiar limpa a duplicata mensal.
+
+    Cenário do bug original: usuário importou a planilha familiar
+    (que tem o agregado mensal `Fatura Nubank (mensal)` na célula de
+    maio/2026) ANTES de processar o PDF. Sem o cleanup, o dashboard
+    somava o agregado da planilha + o detalhe granular do PDF e
+    duplicava o gasto do cartão.
+    """
+    from db.models import FONTE_PLANILHA, TIPO_LANCAMENTO_DESPESA
+    from db.repository import (
+        listar_lancamentos_df,
+        upsert_fatura,
+        upsert_lancamento_manual,
+    )
+
+    upsert_lancamento_manual(
+        descricao="Fatura Demo (mensal)",
+        valor=500.0,
+        ano=2026,
+        mes=5,
+        categoria_nome="Cartão de Crédito",
+        pessoa_nome="Joao Silva",
+        conta_nome="Demo — Joao Silva",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+        chave_planilha="Fatura Demo (mensal)",
+        fonte=FONTE_PLANILHA,
+        arquivo_origem="despesas_Eliabe_Ana.xlsx",
+    )
+
+    df_antes = listar_lancamentos_df()
+    assert (df_antes["fonte"] == FONTE_PLANILHA).sum() == 1
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+
+    df_depois = listar_lancamentos_df()
+    # 3 do PDF, 0 da planilha (removida) + estorno volta com sinal negativo
+    assert (df_depois["fonte"] == FONTE_PLANILHA).sum() == 0
+    assert len(df_depois) == 3
+
+
+def test_upsert_fatura_nao_toca_planilha_de_outra_conta(banco_temporario):
+    """Cleanup só atinge a (conta, ref) exata do PDF — não vaza."""
+    from db.models import FONTE_PLANILHA, TIPO_LANCAMENTO_DESPESA
+    from db.repository import (
+        listar_lancamentos_df,
+        upsert_fatura,
+        upsert_lancamento_manual,
+    )
+
+    # Planilha de OUTRA conta na mesma referência: tem que sobreviver.
+    upsert_lancamento_manual(
+        descricao="Fatura Outro Cartao (mensal)",
+        valor=300.0,
+        ano=2026,
+        mes=5,
+        categoria_nome="Cartão de Crédito",
+        pessoa_nome="Ana",
+        conta_nome="Outro Banco — Ana",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+        chave_planilha="Fatura Outro Cartao (mensal)",
+        fonte=FONTE_PLANILHA,
+    )
+    # Planilha da MESMA conta mas referência diferente: também sobrevive.
+    upsert_lancamento_manual(
+        descricao="Fatura Demo (mensal)",
+        valor=400.0,
+        ano=2026,
+        mes=4,
+        categoria_nome="Cartão de Crédito",
+        pessoa_nome="Joao Silva",
+        conta_nome="Demo — Joao Silva",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+        chave_planilha="Fatura Demo (mensal)",
+        fonte=FONTE_PLANILHA,
+    )
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+
+    df = listar_lancamentos_df()
+    planilhas = df[df["fonte"] == FONTE_PLANILHA]
+    assert len(planilhas) == 2  # nenhuma deletada
+
+
+def test_upsert_fatura_preserva_lancamentos_manuais(banco_temporario):
+    """Cleanup só toca em `fonte=planilha_historico` — manual sobrevive."""
+    from db.models import FONTE_MANUAL, TIPO_LANCAMENTO_DESPESA
+    from db.repository import (
+        listar_lancamentos_df,
+        upsert_fatura,
+        upsert_lancamento_manual,
+    )
+
+    upsert_lancamento_manual(
+        descricao="Ajuste manual cartão",
+        valor=15.0,
+        ano=2026,
+        mes=5,
+        categoria_nome="Cartão de Crédito",
+        pessoa_nome="Joao Silva",
+        conta_nome="Demo — Joao Silva",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+        chave_planilha="ajuste-manual-unico",
+        fonte=FONTE_MANUAL,
+    )
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+
+    df = listar_lancamentos_df()
+    manuais = df[df["fonte"] == FONTE_MANUAL]
+    assert len(manuais) == 1
+
+
+def test_limpar_planilha_quando_pdf_existe_backfill(banco_temporario):
+    """Backfill remove duplicatas em bancos antigos. Idempotente."""
+    from db.models import FONTE_PLANILHA, TIPO_LANCAMENTO_DESPESA
+    from db.repository import (
+        limpar_planilha_quando_pdf_existe,
+        listar_lancamentos_df,
+        upsert_fatura,
+        upsert_lancamento_manual,
+    )
+
+    # Simula o estado degradado: planilha gravada, mas a regra de
+    # cleanup no `upsert_fatura` foi pulada (versão antiga do código).
+    # Pra reproduzir, importamos a planilha DEPOIS do PDF — assim a
+    # regra de skip do `importar_planilha_familiar` não roda (estamos
+    # chamando `upsert_lancamento_manual` direto) e o cleanup do
+    # `upsert_fatura` já passou.
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+    upsert_lancamento_manual(
+        descricao="Fatura Demo (mensal)",
+        valor=500.0,
+        ano=2026,
+        mes=5,
+        categoria_nome="Cartão de Crédito",
+        pessoa_nome="Joao Silva",
+        conta_nome="Demo — Joao Silva",
+        tipo=TIPO_LANCAMENTO_DESPESA,
+        chave_planilha="Fatura Demo (mensal)",
+        fonte=FONTE_PLANILHA,
+    )
+
+    df_antes = listar_lancamentos_df()
+    assert (df_antes["fonte"] == FONTE_PLANILHA).sum() == 1
+
+    resultado = limpar_planilha_quando_pdf_existe()
+    assert resultado["faturas_examinadas"] == 1
+    assert resultado["lancamentos_removidos"] == 1
+
+    df_depois = listar_lancamentos_df()
+    assert (df_depois["fonte"] == FONTE_PLANILHA).sum() == 0
+
+    # Idempotência: 2ª chamada não remove nada.
+    resultado2 = limpar_planilha_quando_pdf_existe()
+    assert resultado2["lancamentos_removidos"] == 0
