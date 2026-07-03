@@ -13,7 +13,18 @@ usuário pode abrir o app sem ter rodado a CLI antes.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+# Streamlit só adiciona `app/` ao sys.path — imports `from app.*` e
+# `from db.*` precisam da raiz do projeto (Docker usa PYTHONPATH=/app).
+_RAIZ_PROJETO = Path(__file__).resolve().parents[1]
+if str(_RAIZ_PROJETO) not in sys.path:
+    sys.path.insert(0, str(_RAIZ_PROJETO))
+
+from dotenv import load_dotenv
+
+load_dotenv(_RAIZ_PROJETO / ".env", override=False)
 
 import streamlit as st
 

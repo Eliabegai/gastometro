@@ -17,8 +17,8 @@ dependencies = [
     "sqlmodel>=0.0.22",
     "alembic>=1.13",
     "python-dotenv>=1.0",
-    "streamlit>=1.42.0",
-    "Authlib>=1.3.2",
+    "streamlit[auth]>=1.42.0",
+    "httpx>=0.27",
     "plotly>=5.24",
 ]
 
@@ -36,7 +36,7 @@ gastometro = "extrator:main"
 py-modules = ["extrator", "categorias"]
 
 [tool.setuptools.packages.find]
-include = ["parsers*", "db*", "imports*", "export*"]
+include = ["parsers*", "db*", "imports*", "export*", "app*"]
 exclude = ["tests*", "entrada*", "saida*", "exemplos*", "alembic*", "dados*"]
 
 [tool.pytest.ini_options]
@@ -68,6 +68,7 @@ ignore = ["E501", "B008"]
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]
 "__init__.py" = ["F401"]
+"app/streamlit_app.py" = ["E402"]
 
 [tool.mypy]
 # Alinhado ao job de CI (Python 3.12). Stubs recentes do numpy usam
