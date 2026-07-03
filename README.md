@@ -626,7 +626,82 @@ Pode definir no `.env` da raiz (mesmo arquivo que o `direnv` usa):
 # .env
 GASTOMETRO_PLANILHA_URL=https://docs.google.com/spreadsheets/d/.../edit
 GASTOMETRO_BACKUPS_KEEP=60         # default 30
+
+# Auth Google (produção no VPS)
+GASTOMETRO_AUTH_ENABLED=true
+GASTOMETRO_ALLOWED_EMAILS=voce@gmail.com,outro@gmail.com
 ```
+
+### Login Google e proteção de dados (VPS)
+
+Para expor o app na internet **sem vazar dados financeiros**, o
+Gastômetro usa login Google (OIDC nativo do Streamlit ≥ 1.42) +
+**allowlist de e-mails** no `.env`. Ninguém vê Dashboard, Lançamentos
+ou qualquer dado antes de autenticar **e** estar na lista permitida.
+
+Plano detalhado: [`docs/PLANO_LOGIN_GOOGLE.md`](docs/PLANO_LOGIN_GOOGLE.md).
+
+#### 1. Google Cloud (uma vez)
+
+1. Crie um projeto em [Google Cloud Console](https://console.cloud.google.com/).
+2. **APIs & Services → OAuth consent screen** — nome "Gastômetro",
+   e-mail de suporte.
+3. **Credentials → Create OAuth client ID → Web application**.
+4. **Authorized redirect URIs** (adicione todas que for usar):
+   - `http://localhost:8501/oauth2callback` (dev local)
+   - `https://gastometro.seudominio.com/oauth2callback` (VPS)
+5. Copie `client_id` e `client_secret`.
+6. Gere `cookie_secret`: `openssl rand -hex 32`.
+7. Em modo **Testing**, cadastre os e-mails da família como test users.
+   Quando estiver estável, publique o app OAuth.
+
+#### 2. Secrets do Streamlit (não commitar)
+
+```bash
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+# Edite redirect_uri, client_id, client_secret e cookie_secret
+```
+
+O arquivo `.streamlit/secrets.toml` está no `.gitignore`.
+
+#### 3. Variáveis no `.env` do servidor
+
+```bash
+GASTOMETRO_AUTH_ENABLED=true
+GASTOMETRO_ALLOWED_EMAILS=voce@gmail.com,outro@gmail.com
+GASTOMETRO_DOMAIN=gastometro.seudominio.com
+CADDY_EMAIL=voce@gmail.com
+STREAMLIT_ENABLE_XSRF=false
+STREAMLIT_ENABLE_CORS=false
+```
+
+`redirect_uri` em `secrets.toml` deve ser
+`https://<GASTOMETRO_DOMAIN>/oauth2callback` — a mesma URI cadastrada
+no Google Cloud.
+
+#### 4. Subir no VPS com HTTPS (Caddy)
+
+O profile `prod` adiciona Caddy na frente do Streamlit (porta 8501
+**não** fica pública — só 80/443):
+
+```bash
+# Firewall: liberar 80 e 443; bloquear 8501 externamente
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --profile prod up -d --build
+```
+
+Acesse `https://gastometro.seudominio.com` → botão **Entrar com Google**.
+
+#### Dev local sem login
+
+```bash
+GASTOMETRO_AUTH_ENABLED=false streamlit run app/streamlit_app.py
+```
+
+Ou deixe `GASTOMETRO_AUTH_ENABLED=false` no `.env` (default).
+
+> **Nunca** commite `.streamlit/secrets.toml`, `.env`, PDFs ou planilhas
+> com dados reais.
 
 ### Backup off-site (opcional, com Litestream)
 
@@ -673,6 +748,8 @@ roda local não precisa de token.
    > ngrok (URL não-adivinhável); pra camadas extras, configure
    > [Basic Auth no ngrok](https://ngrok.com/docs/http/traffic-policy/actions/basic-auth/)
    > ou [OAuth](https://ngrok.com/docs/http/oauth/) no painel.
+   > **Recomendado para produção:** login Google no app (seção
+   > [Login Google e proteção de dados](#login-google-e-proteção-de-dados-vps)).
 
 5. Suba com o profile ativo:
 
@@ -735,7 +812,9 @@ realidade do seu uso.
 
 Suba o container Docker num PC/Mac/Raspberry/NAS que fica sempre
 ligado (seção acima). Os outros PCs **não rodam o app** — só abrem
-`http://<ip-do-servidor>:8501` no browser.
+o app no browser. Em LAN: `http://<ip-do-servidor>:8501`. No VPS
+com HTTPS: `https://gastometro.seudominio.com` (veja seção de
+[login Google](#login-google-e-proteção-de-dados-vps)).
 
 - Vantagem: zero cópia de banco, zero risco de conflito, dados
   sempre sincronizados.
