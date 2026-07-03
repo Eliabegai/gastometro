@@ -69,7 +69,9 @@ ignore = ["E501", "B008"]
 "__init__.py" = ["F401"]
 
 [tool.mypy]
-python_version = "3.10"
+# Alinhado ao job de CI (Python 3.12). Stubs recentes do numpy usam
+# `type` (PEP 695), que o mypy só aceita com python_version >= 3.12.
+python_version = "3.12"
 # Configuração permissiva: o código foi escrito sem tipos completos
 # em alguns lugares (DataFrames do pandas, openpyxl). Endurecer aos
 # poucos via `disallow_untyped_defs = true` por módulo.

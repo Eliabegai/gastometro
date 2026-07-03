@@ -173,8 +173,8 @@ def test_consolidar_pessoas_apenas_velha_renomeia(banco_temporario) -> None:
         "pessoas_removidas": 0,
     }
     with get_session() as s:
-        p = s.exec(select(Pessoa).where(Pessoa.nome == "Maria Souza")).first()
-        assert p is not None and p.id == id_velha
+        p_renomeada = s.exec(select(Pessoa).where(Pessoa.nome == "Maria Souza")).first()
+        assert p_renomeada is not None and p_renomeada.id == id_velha
 
 
 def test_consolidar_pessoas_funde_ambas(banco_temporario) -> None:
@@ -220,11 +220,11 @@ def test_consolidar_pessoas_funde_ambas(banco_temporario) -> None:
         ).first()
         assert conta is not None
         assert conta.pessoa_id == id_canonica
-        lanc = s.exec(
+        lanc_movido = s.exec(
             select(Lancamento).where(Lancamento.descricao == "compra A")
         ).first()
-        assert lanc is not None
-        assert lanc.pessoa_id == id_canonica
+        assert lanc_movido is not None
+        assert lanc_movido.pessoa_id == id_canonica
 
 
 def test_consolidar_pessoas_idempotente(banco_temporario) -> None:
