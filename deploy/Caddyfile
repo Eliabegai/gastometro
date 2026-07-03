@@ -1,0 +1,10 @@
+# Domínio e e-mail ACME vêm do ambiente (docker-compose.prod.yml).
+# Local/dev: use docker compose up sem o profile prod (porta 8501 direta).
+
+{
+	email {$CADDY_EMAIL}
+}
+
+{$GASTOMETRO_DOMAIN} {
+	reverse_proxy gastometro:8501
+}

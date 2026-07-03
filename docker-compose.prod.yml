@@ -1,0 +1,50 @@
+# Deploy em VPS com HTTPS (Let's Encrypt via Caddy).
+#
+# Pré-requisitos no `.env`:
+#   GASTOMETRO_DOMAIN=gastometro.seudominio.com
+#   CADDY_EMAIL=voce@gmail.com
+#   GASTOMETRO_AUTH_ENABLED=true
+#   GASTOMETRO_ALLOWED_EMAILS=voce@gmail.com,outro@gmail.com
+#   STREAMLIT_ENABLE_XSRF=false
+#   STREAMLIT_ENABLE_CORS=false
+#   + `.streamlit/secrets.toml` com redirect_uri HTTPS do domínio
+#
+# Subir:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     --profile prod up -d --build
+#
+# A porta 8501 NÃO fica exposta publicamente — só 80/443 via Caddy.
+
+services:
+  gastometro:
+    ports: !reset []
+    expose:
+      - "8501"
+    volumes:
+      - ./dados:/data
+      - ./entrada:/app/entrada
+      - ./saida:/app/saida
+      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: gastometro-caddy
+    restart: unless-stopped
+    profiles: ["prod"]
+    depends_on:
+      gastometro:
+        condition: service_healthy
+    environment:
+      GASTOMETRO_DOMAIN: ${GASTOMETRO_DOMAIN:?Defina GASTOMETRO_DOMAIN no .env}
+      CADDY_EMAIL: ${CADDY_EMAIL:?Defina CADDY_EMAIL no .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

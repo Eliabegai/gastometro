@@ -38,6 +38,9 @@ services:
       # URL salva da planilha familiar (Google Sheets). Opcional —
       # pode ser também colada na UI (fica em /data/planilha_url.txt).
       GASTOMETRO_PLANILHA_URL: ${GASTOMETRO_PLANILHA_URL:-}
+      # Auth Google — desligada por default (dev local). No VPS: true.
+      GASTOMETRO_AUTH_ENABLED: ${GASTOMETRO_AUTH_ENABLED:-false}
+      GASTOMETRO_ALLOWED_EMAILS: ${GASTOMETRO_ALLOWED_EMAILS:-}
       # XSRF/CORS do Streamlit precisam ficar **off** quando o app está
       # atrás de um proxy/túnel (ngrok, Cloudflare Tunnel, Tailscale
       # Funnel) — senão o `st.file_uploader` da página Importar quebra
@@ -53,6 +56,8 @@ services:
       - ./entrada:/app/entrada
       # Excel acumulativo regenerado pela UI / CLI.
       - ./saida:/app/saida
+      # OAuth Google (opcional em dev — cp .streamlit/secrets.toml.example).
+      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8501/_stcore/health"]
       interval: 30s
