@@ -40,3 +40,9 @@ categorias_usuario.json
 .env
 .env.local
 !.env.example
+
+# OAuth do Streamlit (client_secret — nunca commitar)
+.streamlit/secrets.toml
+
+# Credenciais OAuth baixadas do Google Cloud (JSON)
+client_secret_*.json

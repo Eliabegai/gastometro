@@ -17,6 +17,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from app.auth import exigir_acesso, renderizar_barra_usuario
+
 RAIZ = Path(__file__).resolve().parent
 PAGINAS = RAIZ / "paginas"
 
@@ -36,7 +38,9 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
+    exigir_acesso()
     _bootstrap_banco()
+    renderizar_barra_usuario()
 
     paginas = [
         st.Page(

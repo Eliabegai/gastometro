@@ -20,6 +20,12 @@ if str(ROOT) not in sys.path:
 
 
 @pytest.fixture(autouse=True)
+def desabilitar_auth(monkeypatch):
+    """Testes rodam sem OAuth — auth fica off por padrão."""
+    monkeypatch.setenv("GASTOMETRO_AUTH_ENABLED", "false")
+
+
+@pytest.fixture(autouse=True)
 def isolar_categorias_usuario(tmp_path, monkeypatch):
     """Cada teste roda com um `categorias_usuario.json` vazio em diretório
     temporário, sem tocar no arquivo real do usuário."""
