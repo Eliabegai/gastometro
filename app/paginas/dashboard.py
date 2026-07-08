@@ -50,6 +50,7 @@ from app.helpers import (
     chave_ord_ref_iso,
     filtrar_por_ano,
     formatar_brl,
+    formatar_brl_md,
     ref_para_nome_br,
     selecionar_ano,
     selecionar_mes,
@@ -397,17 +398,15 @@ def _banner_alertas_orcamento(progressos: pd.DataFrame) -> None:
         st.warning("🟡 Orçamento: " + " · ".join(partes))
 
     for row in alertas.itertuples(index=False):
+        msg = (
+            f"{row.rotulo} — {formatar_brl_md(row.gasto)} de "
+            f"{formatar_brl_md(row.limite)} ({row.pct:.0f}%)"
+        )
         if row.status == "estourado":
-            st.error(
-                f"**{row.rotulo}** — {formatar_brl(row.gasto)} de "
-                f"{formatar_brl(row.limite)} ({row.pct:.0f}%). "
-                f"Estourou em {formatar_brl(row.gasto - row.limite)}."
-            )
+            msg += f". Estourou em {formatar_brl_md(row.gasto - row.limite)}."
+            st.error(msg)
         else:
-            st.warning(
-                f"**{row.rotulo}** — {formatar_brl(row.gasto)} de "
-                f"{formatar_brl(row.limite)} ({row.pct:.0f}%)."
-            )
+            st.warning(msg)
 
 
 def _grafico_casal_pessoal(resumo: dict[str, float], por_pessoa: pd.DataFrame) -> None:
