@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 import streamlit as st
 from sqlmodel import select
@@ -175,11 +176,16 @@ def _secao_progresso(df_mes, referencia: str) -> None:
     for row in progressos.itertuples(index=False):
         meta_id = int(row.id) if row.id else None
 
-        def _excluir(mid: int = meta_id) -> None:
-            if mid:
-                excluir_orcamento_meta(mid)
-                invalidar_cache()
-                st.rerun()
+        def _make_excluir(mid: int | None) -> Callable[[], None]:
+            def _excluir() -> None:
+                if mid is not None:
+                    excluir_orcamento_meta(mid)
+                    invalidar_cache()
+                    st.rerun()
+
+            return _excluir
+
+        ao_excluir = _make_excluir(meta_id) if meta_id else None
 
         subtitulo = ""
         if "Cartão de Crédito" in row.rotulo:
@@ -193,7 +199,7 @@ def _secao_progresso(df_mes, referencia: str) -> None:
             row.status,
             subtitulo=subtitulo,
             key_excluir=f"del_meta_{meta_id}" if meta_id else None,
-            ao_excluir=_excluir if meta_id else None,
+            ao_excluir=ao_excluir,
         )
 
 
