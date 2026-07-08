@@ -13,6 +13,7 @@ from analytics.escopo import (
     marcar_escopo,
     projetar_despesa_mes,
     referencia_mes_anterior,
+    resumo_escopo_categoria,
     resumo_escopo_despesas,
 )
 from analytics.orcamento import calcular_progressos, listar_alertas, resumo_alertas
@@ -111,6 +112,16 @@ def test_progresso_orcamento_categoria_casal():
     prog = calcular_progressos(df, metas)
     assert prog.iloc[0]["gasto"] == 90.8
     assert prog.iloc[0]["pct"] == 45.4
+
+
+def test_resumo_escopo_categoria():
+    df = _df([
+        {"categoria": "Alimentação", "valor": 100.0, "pessoa": "Ana"},
+        {"categoria": "Alimentação", "valor": 50.0, "pessoa": ""},
+    ])
+    r = resumo_escopo_categoria(df, "Alimentação")
+    assert r["pessoal"] == 100.0
+    assert r["casal"] == 50.0
 
 
 def test_progresso_orcamento_cartao_credito():

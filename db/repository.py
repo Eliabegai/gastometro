@@ -971,6 +971,20 @@ def salvar_escopo_categoria(categoria_nome: str, escopo: str) -> None:
             session.add(existente)
 
 
+def excluir_escopo_categoria(categoria_nome: str) -> None:
+    """Remove override de escopo; volta à regra automática."""
+    nome = categoria_nome.strip()
+    if not nome:
+        return
+    with get_session() as session:
+        cat = session.exec(select(Categoria).where(Categoria.nome == nome)).first()
+        if cat is None:
+            return
+        existente = session.get(EscopoCategoria, cat.id)
+        if existente is not None:
+            session.delete(existente)
+
+
 def listar_orcamentos_df(referencia_mes: str) -> pd.DataFrame:
     """Metas de orçamento de um mês com nomes resolvidos."""
     with get_session() as session:

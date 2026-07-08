@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from analytics.escopo import ESCOPO_CASAL, ESCOPO_PESSOAL, marcar_escopo
 from analytics.recorrentes import marcar_recorrentes, rotulo_tipo_recorrente
 from app.estado import (
     CHAVES_GLOBAIS,
@@ -43,6 +44,7 @@ from app.helpers import (
     rotulo_periodo_global,
     sidebar_filtros_lancamentos,
 )
+from db.repository import listar_escopos_categoria_dict
 
 
 def _resumo(df) -> None:
@@ -91,8 +93,13 @@ def _tabela(df) -> None:
             "eh_recorrente": "Recorrente",
             "grupo_recorrente": "Grupo recorrente",
             "tipo_recorrente": "Tipo recorrente",
+            "escopo": "Escopo",
         }
     )
+    if "Escopo" in visivel.columns:
+        visivel["Escopo"] = visivel["Escopo"].map(
+            {"casal": "Casal", "pessoal": "Pessoal"}
+        ).fillna("")
     if "Recorrente" in visivel.columns:
         visivel["Recorrente"] = visivel["Recorrente"].map(
             {True: "🔁", False: ""}
@@ -109,6 +116,7 @@ def _tabela(df) -> None:
         "Descrição",
         "Grupo recorrente",
         "Categoria",
+        "Escopo",
         "Cartão / Conta",
         "Pessoa",
         "Parcela",
@@ -207,7 +215,18 @@ def render() -> None:
         help="Mostra apenas lançamentos que fazem parte de um "
         "padrão detectado (assinatura, conta fixa, etc.).",
     )
-    df_marcado = marcar_recorrentes(sub)
+    escopo_opts = ["Todos", "Casal", "Pessoal"]
+    escopo_filtro = st.sidebar.selectbox(
+        "Escopo (casal / pessoal)",
+        escopo_opts,
+        key="f_escopo",
+        help="Casal = gastos conjuntos; Pessoal = gastos do titular do cartão.",
+    )
+
+    overrides_escopo = listar_escopos_categoria_dict()
+    df_marcado = marcar_escopo(
+        marcar_recorrentes(sub), overrides_categoria=overrides_escopo
+    )
     if texto_busca:
         mask = df_marcado["descricao"].astype(str).str.contains(
             texto_busca, case=False, na=False
@@ -218,6 +237,10 @@ def render() -> None:
         df_marcado = df_marcado[mask]
     if so_recorrentes:
         df_marcado = df_marcado[df_marcado["eh_recorrente"]]
+    if escopo_filtro == "Casal":
+        df_marcado = df_marcado[df_marcado["escopo"] == ESCOPO_CASAL]
+    elif escopo_filtro == "Pessoal":
+        df_marcado = df_marcado[df_marcado["escopo"] == ESCOPO_PESSOAL]
     sub = df_marcado
 
     if filtros.get("data_inicio") and filtros.get("data_fim"):

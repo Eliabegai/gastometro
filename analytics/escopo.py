@@ -144,6 +144,32 @@ def resumo_por_pessoa(df: pd.DataFrame) -> pd.DataFrame:
     return agg
 
 
+def resumo_escopo_categoria(
+    df: pd.DataFrame,
+    categoria: str,
+    *,
+    overrides_categoria: dict[str, str] | None = None,
+) -> dict[str, float | int]:
+    """Soma e quantidade casal/pessoal para uma categoria no recorte."""
+    vazio = {"casal": 0.0, "pessoal": 0.0, "qtde_casal": 0, "qtde_pessoal": 0}
+    if df.empty or not categoria:
+        return vazio
+
+    sub = df[(df["tipo"] == "despesa") & (df["categoria"] == categoria)]
+    if sub.empty:
+        return vazio
+
+    marcado = marcar_escopo(sub, overrides_categoria=overrides_categoria)
+    casal = marcado[marcado["escopo"] == ESCOPO_CASAL]
+    pessoal = marcado[marcado["escopo"] == ESCOPO_PESSOAL]
+    return {
+        "casal": float(casal["valor"].sum()),
+        "pessoal": float(pessoal["valor"].sum()),
+        "qtde_casal": int(len(casal)),
+        "qtde_pessoal": int(len(pessoal)),
+    }
+
+
 def referencia_mes_anterior(iso: str) -> str | None:
     """'2026-05' → '2026-04'; janeiro volta para dezembro do ano anterior."""
     if not iso or "-" not in iso:

@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import re
+
 import streamlit as st
 from sqlmodel import select
 
-from analytics.escopo import ESCOPO_CASAL, ESCOPO_PESSOAL, marcar_escopo, referencia_mes_anterior
+from analytics.escopo import (
+    ESCOPO_CASAL,
+    ESCOPO_PESSOAL,
+    marcar_escopo,
+    referencia_mes_anterior,
+    resumo_escopo_categoria,
+)
 from analytics.orcamento import calcular_progressos
 from app.estado import (
     CHAVE_MES,
@@ -29,6 +37,7 @@ from db.engine import get_session
 from db.models import Categoria, Pessoa
 from db.repository import (
     copiar_orcamentos_de_mes,
+    excluir_escopo_categoria,
     excluir_orcamento_meta,
     listar_escopos_categoria_dict,
     listar_orcamentos_df,
@@ -228,28 +237,98 @@ def _secao_limite_categoria(referencia: str) -> None:
                 st.rerun()
 
 
-def _secao_escopo_categorias() -> None:
-    with st.expander("Classificar categoria como casal ou pessoal (avançado)", expanded=False):
-        st.caption(
-            "Por padrão, Casa Fixa e Financiamentos são **casal**; demais "
-            "gastos seguem a pessoa do cartão. Ajuste exceções aqui."
+def _slug_categoria(nome: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", nome.lower()).strip("_")[:48]
+
+
+def _secao_escopo_categorias(df_mes, referencia: str) -> None:
+    label_mes = ref_para_nome_br(referencia)
+    with st.expander("Classificar categoria como casal ou pessoal", expanded=False):
+        st.markdown(
+            "Veja **como os lançamentos estão classificados hoje** e ajuste "
+            "se quiser que uma categoria inteira conte sempre como casal ou pessoal."
         )
         overrides = listar_escopos_categoria_dict()
         cat = st.selectbox("Categoria", _categorias_despesa(), key="escopo_cat_sel")
+
+        resumo = resumo_escopo_categoria(df_mes, cat, overrides_categoria=overrides)
+        total_cat = float(resumo["casal"]) + float(resumo["pessoal"])
+        if total_cat > 0:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Casal nesta categoria", formatar_brl(float(resumo["casal"])))
+            c2.metric("Pessoal nesta categoria", formatar_brl(float(resumo["pessoal"])))
+            c3.metric(
+                "Lançamentos",
+                f"{int(resumo['qtde_casal']) + int(resumo['qtde_pessoal'])}",
+                delta=f"{int(resumo['qtde_casal'])} casal · {int(resumo['qtde_pessoal'])} pessoal",
+                delta_color="off",
+            )
+        else:
+            st.caption(f"Nenhuma despesa em **{cat}** em {label_mes}.")
+
+        if cat in overrides:
+            salvo = "Casal" if overrides[cat] == ESCOPO_CASAL else "Pessoal"
+            st.success(f"Override ativo: todos os lançamentos de **{cat}** contam como **{salvo}**.")
+            default_idx = 0 if overrides[cat] == ESCOPO_CASAL else 1
+        else:
+            st.info(
+                "Sem override — cada lançamento segue a regra automática "
+                "(titular do cartão → pessoal; luz/financiamento → casal). "
+                "Prévia abaixo."
+            )
+            default_idx = (
+                0 if float(resumo["casal"]) >= float(resumo["pessoal"]) else 1
+            )
+
+        sub = df_mes[(df_mes["tipo"] == "despesa") & (df_mes["categoria"] == cat)]
+        if not sub.empty:
+            prev = marcar_escopo(sub, overrides_categoria=overrides)[
+                ["data", "descricao", "pessoa", "valor", "escopo"]
+            ].copy()
+            prev["escopo"] = prev["escopo"].map(
+                {"casal": "Casal", "pessoal": "Pessoal"}
+            )
+            prev = prev.rename(
+                columns={
+                    "data": "Data",
+                    "descricao": "Descrição",
+                    "pessoa": "Pessoa",
+                    "valor": "Valor (R$)",
+                    "escopo": "Escopo",
+                }
+            )
+            st.dataframe(
+                prev.sort_values("Data", ascending=False).head(15),
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+                },
+            )
+            st.caption("Veja todos em **Lançamentos** (coluna Escopo + filtro).")
+
         escopo = st.radio(
-            "Contar como",
+            "Forçar classificação como",
             [ESCOPO_CASAL, ESCOPO_PESSOAL],
-            index=0 if overrides.get(cat) == ESCOPO_CASAL else 1,
+            index=default_idx,
             format_func=lambda e: "Gasto do casal" if e == ESCOPO_CASAL else "Gasto pessoal",
             horizontal=True,
-            key="escopo_cat_val",
+            key=f"escopo_radio_{_slug_categoria(cat)}",
         )
-        if cat not in overrides:
-            st.caption("Regra automática hoje: **automática** (sem override).")
-        if st.button("Salvar classificação", key="btn_salvar_escopo"):
-            salvar_escopo_categoria(cat, escopo)
-            invalidar_cache()
-            st.rerun()
+        col_salvar, col_remover = st.columns(2)
+        with col_salvar:
+            if st.button("Salvar classificação", key=f"btn_salvar_escopo_{_slug_categoria(cat)}"):
+                salvar_escopo_categoria(cat, escopo)
+                invalidar_cache()
+                st.rerun()
+        with col_remover:
+            if cat in overrides and st.button(
+                "Remover override",
+                key=f"btn_remover_escopo_{_slug_categoria(cat)}",
+            ):
+                excluir_escopo_categoria(cat)
+                invalidar_cache()
+                st.rerun()
 
 
 def render() -> None:
@@ -331,7 +410,7 @@ def render() -> None:
     _secao_progresso(df_mes, ref)
     st.divider()
     _secao_limite_categoria(ref)
-    _secao_escopo_categorias()
+    _secao_escopo_categorias(df_mes, ref)
     persistir_globais()
 
 
