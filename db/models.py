@@ -61,6 +61,10 @@ FONTE_EXCEL_LEGADO = "excel_legado"
 FONTE_CSV = "csv"
 FONTES = {FONTE_PDF, FONTE_PLANILHA, FONTE_MANUAL, FONTE_EXCEL_LEGADO, FONTE_CSV}
 
+# Streamlit reexecuta módulos no rerun; sem isso o SQLAlchemy reclama que a
+# tabela já existe no MetaData global.
+_TABLE_ARGS: dict[str, bool] = {"extend_existing": True}
+
 
 class Pessoa(SQLModel, table=True):
     """Quem é o dono/responsável por uma despesa ou receita.
@@ -77,6 +81,7 @@ class Pessoa(SQLModel, table=True):
     """
 
     __tablename__ = "pessoa"
+    __table_args__ = _TABLE_ARGS
 
     id: int | None = Field(default=None, primary_key=True)
     nome: str = Field(index=True, unique=True)
@@ -92,6 +97,7 @@ class Conta(SQLModel, table=True):
     """
 
     __tablename__ = "conta"
+    __table_args__ = _TABLE_ARGS
 
     id: int | None = Field(default=None, primary_key=True)
     nome: str = Field(index=True, unique=True)
@@ -108,6 +114,7 @@ class Categoria(SQLModel, table=True):
     """
 
     __tablename__ = "categoria"
+    __table_args__ = _TABLE_ARGS
 
     id: int | None = Field(default=None, primary_key=True)
     nome: str = Field(index=True, unique=True)
@@ -124,6 +131,7 @@ class Fatura(SQLModel, table=True):
     """
 
     __tablename__ = "fatura"
+    __table_args__ = _TABLE_ARGS
 
     id: int | None = Field(default=None, primary_key=True)
     conta_id: int = Field(foreign_key="conta.id", index=True)
@@ -156,6 +164,7 @@ class Lancamento(SQLModel, table=True):
     """
 
     __tablename__ = "lancamento"
+    __table_args__ = _TABLE_ARGS
 
     id: int | None = Field(default=None, primary_key=True)
     data: date = Field(index=True)
@@ -200,6 +209,7 @@ class OverrideCategoria(SQLModel, table=True):
     """
 
     __tablename__ = "override_categoria"
+    __table_args__ = _TABLE_ARGS
 
     descricao_normalizada: str = Field(primary_key=True)
     categoria_id: int = Field(foreign_key="categoria.id", index=True)

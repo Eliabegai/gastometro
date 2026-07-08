@@ -25,6 +25,7 @@ PAGINAS = [
     "app/streamlit_app.py",
     "app/paginas/dashboard.py",
     "app/paginas/lancamentos.py",
+    "app/paginas/recorrentes.py",
     "app/paginas/faturas.py",
     "app/paginas/categorias.py",
     "app/paginas/importar.py",

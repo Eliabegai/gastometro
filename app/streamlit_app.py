@@ -36,9 +36,12 @@ PAGINAS = RAIZ / "paginas"
 
 def _bootstrap_banco() -> None:
     """Garante migrations aplicadas + seed inicial. No-op em re-runs."""
+    if st.session_state.get("_gastometro_bootstrap_ok"):
+        return
     from db.seed import seed_inicial
 
     seed_inicial()
+    st.session_state["_gastometro_bootstrap_ok"] = True
 
 
 def main() -> None:

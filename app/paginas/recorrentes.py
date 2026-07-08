@@ -19,10 +19,13 @@ from analytics.recorrentes import (
     listar_tipos_recorrente,
     rotulo_tipo_recorrente,
 )
+from app.estado import hidratar_globais, persistir_globais
 from app.helpers import (
     carregar_lancamentos,
+    filtrar_por_ano,
     formatar_brl,
     ref_para_nome_br,
+    selecionar_ano,
 )
 
 _CORES_TIPO = {
@@ -180,9 +183,7 @@ def _detalhe_padrao(df: pd.DataFrame, padroes: pd.DataFrame) -> None:
     lancamentos = listar_lancamentos_padrao(df, linha["chave"])
     if not lancamentos.empty:
         st.caption(
-            "Lançamentos que compõem este padrão. Se não aparecem em "
-            "**Lançamentos**, verifique o filtro de **ano** no Dashboard "
-            "(ex.: este item pode ser de 2024)."
+            "Lançamentos que compõem este padrão no recorte de ano selecionado."
         )
         visivel = lancamentos.copy()
         if "referencia_mes" in visivel.columns:
@@ -225,12 +226,30 @@ def render() -> None:
         "e faturas de cartão."
     )
 
+    hidratar_globais()
+
     df = carregar_lancamentos()
     if df is None or df.empty:
         st.info(
             "Banco vazio. Rode `gastometro` ou importe faturas "
             "para detectar padrões."
         )
+        return
+
+    col_ano, col_info = st.columns([1, 3])
+    with col_ano:
+        ano = selecionar_ano(df)
+    with col_info:
+        if ano is not None:
+            st.caption(f"Padrões detectados com base nos lançamentos de **{ano}**.")
+        else:
+            st.caption("Padrões detectados com base em **todo o histórico**.")
+
+    df = filtrar_por_ano(df, ano)
+    if df.empty:
+        rotulo = f"em **{ano}**" if ano is not None else "no recorte selecionado"
+        st.info(f"Nenhum lançamento {rotulo}.")
+        persistir_globais()
         return
 
     meses_min = st.sidebar.slider(
@@ -297,6 +316,8 @@ def render() -> None:
     st.divider()
     st.subheader("Histórico por padrão")
     _detalhe_padrao(df, padroes_visiveis)
+
+    persistir_globais()
 
 
 render()
