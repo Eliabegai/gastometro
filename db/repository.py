@@ -24,6 +24,8 @@ from categorias import _normalizar as normalizar_descricao  # noqa: PLC2701
 from categorias import categorizar as categorizar_por_regras
 from db.engine import get_session
 from db.models import (
+    ESCOPO_CASAL,
+    ESCOPO_PESSOAL,
     FONTE_PDF,
     FONTE_PLANILHA,
     TIPO_CATEGORIA_DESPESA,
@@ -33,8 +35,10 @@ from db.models import (
     TIPO_LANCAMENTO_RECEITA,
     Categoria,
     Conta,
+    EscopoCategoria,
     Fatura,
     Lancamento,
+    OrcamentoMeta,
     OverrideCategoria,
     Pessoa,
     _agora_utc,
@@ -936,6 +940,153 @@ def listar_overrides_dict() -> dict[str, str]:
         )
         rows = session.exec(stmt).all()
     return {desc: nome for desc, nome in rows}
+
+
+def listar_escopos_categoria_dict() -> dict[str, str]:
+    """`{nome_categoria: escopo}` dos overrides persistidos."""
+    with get_session() as session:
+        stmt = select(Categoria.nome, EscopoCategoria.escopo).join(
+            EscopoCategoria, EscopoCategoria.categoria_id == Categoria.id
+        )
+        rows = session.exec(stmt).all()
+    return {nome: escopo for nome, escopo in rows}
+
+
+def salvar_escopo_categoria(categoria_nome: str, escopo: str) -> None:
+    """Persiste escopo casal/pessoal para uma categoria."""
+    if escopo not in {ESCOPO_CASAL, ESCOPO_PESSOAL}:
+        return
+    nome = categoria_nome.strip()
+    if not nome:
+        return
+    with get_session() as session:
+        cat = session.exec(select(Categoria).where(Categoria.nome == nome)).first()
+        if cat is None:
+            return
+        existente = session.get(EscopoCategoria, cat.id)
+        if existente is None:
+            session.add(EscopoCategoria(categoria_id=cat.id, escopo=escopo))
+        else:
+            existente.escopo = escopo
+            session.add(existente)
+
+
+def listar_orcamentos_df(referencia_mes: str) -> pd.DataFrame:
+    """Metas de orçamento de um mês com nomes resolvidos."""
+    with get_session() as session:
+        stmt = (
+            select(OrcamentoMeta, Categoria, Pessoa)
+            .join(Categoria, OrcamentoMeta.categoria_id == Categoria.id, isouter=True)
+            .join(Pessoa, OrcamentoMeta.pessoa_id == Pessoa.id, isouter=True)
+            .where(OrcamentoMeta.referencia_mes == referencia_mes)
+            .order_by(OrcamentoMeta.escopo, OrcamentoMeta.id)
+        )
+        rows = session.exec(stmt).all()
+
+        registros: list[dict[str, Any]] = []
+        for meta, cat, pessoa in rows:
+            registros.append(
+                {
+                    "id": meta.id,
+                    "referencia_mes": meta.referencia_mes,
+                    "escopo": meta.escopo,
+                    "pessoa": pessoa.nome if pessoa else "",
+                    "pessoa_id": meta.pessoa_id,
+                    "categoria": cat.nome if cat else "",
+                    "categoria_id": meta.categoria_id,
+                    "valor_limite": float(meta.valor_limite),
+                }
+            )
+    return pd.DataFrame(registros)
+
+
+def salvar_orcamento_meta(
+    *,
+    referencia_mes: str,
+    escopo: str,
+    valor_limite: float,
+    pessoa_id: int | None = None,
+    categoria_id: int | None = None,
+    meta_id: int | None = None,
+) -> None:
+    """Cria ou atualiza uma meta de orçamento."""
+    if escopo not in {ESCOPO_CASAL, ESCOPO_PESSOAL}:
+        return
+    limite = Decimal(str(valor_limite)).quantize(Decimal("0.01"))
+    with get_session() as session:
+        if meta_id is not None:
+            meta = session.get(OrcamentoMeta, meta_id)
+            if meta is not None:
+                meta.valor_limite = limite
+                meta.escopo = escopo
+                meta.pessoa_id = pessoa_id
+                meta.categoria_id = categoria_id
+                meta.atualizado_em = _agora_utc()
+                session.add(meta)
+                return
+
+        stmt = select(OrcamentoMeta).where(
+            OrcamentoMeta.referencia_mes == referencia_mes,
+            OrcamentoMeta.escopo == escopo,
+            OrcamentoMeta.pessoa_id == pessoa_id,
+            OrcamentoMeta.categoria_id == categoria_id,
+        )
+        existente = session.exec(stmt).first()
+        if existente is not None:
+            existente.valor_limite = limite
+            existente.atualizado_em = _agora_utc()
+            session.add(existente)
+        else:
+            session.add(
+                OrcamentoMeta(
+                    referencia_mes=referencia_mes,
+                    escopo=escopo,
+                    pessoa_id=pessoa_id,
+                    categoria_id=categoria_id,
+                    valor_limite=limite,
+                )
+            )
+
+
+def excluir_orcamento_meta(meta_id: int) -> None:
+    with get_session() as session:
+        meta = session.get(OrcamentoMeta, meta_id)
+        if meta is not None:
+            session.delete(meta)
+
+
+def copiar_orcamentos_de_mes(origem: str, destino: str) -> int:
+    """Copia metas de `origem` para `destino`. Não sobrescreve metas já existentes."""
+    if not origem or not destino or origem == destino:
+        return 0
+    with get_session() as session:
+        origem_metas = session.exec(
+            select(OrcamentoMeta).where(OrcamentoMeta.referencia_mes == origem)
+        ).all()
+        if not origem_metas:
+            return 0
+        destino_metas = session.exec(
+            select(OrcamentoMeta).where(OrcamentoMeta.referencia_mes == destino)
+        ).all()
+        chaves_destino = {
+            (m.escopo, m.pessoa_id, m.categoria_id) for m in destino_metas
+        }
+        copiados = 0
+        for meta in origem_metas:
+            chave = (meta.escopo, meta.pessoa_id, meta.categoria_id)
+            if chave in chaves_destino:
+                continue
+            session.add(
+                OrcamentoMeta(
+                    referencia_mes=destino,
+                    escopo=meta.escopo,
+                    pessoa_id=meta.pessoa_id,
+                    categoria_id=meta.categoria_id,
+                    valor_limite=meta.valor_limite,
+                )
+            )
+            copiados += 1
+        return copiados
 
 
 # Mantida para futuras categorias de receita; ainda não usada na Fase 1

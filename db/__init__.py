@@ -16,8 +16,10 @@ from db.engine import get_engine, get_session
 from db.models import (
     Categoria,
     Conta,
+    EscopoCategoria,
     Fatura,
     Lancamento,
+    OrcamentoMeta,
     OverrideCategoria,
     Pessoa,
 )
@@ -25,8 +27,10 @@ from db.models import (
 __all__ = [
     "Categoria",
     "Conta",
+    "EscopoCategoria",
     "Fatura",
     "Lancamento",
+    "OrcamentoMeta",
     "OverrideCategoria",
     "Pessoa",
     "get_engine",

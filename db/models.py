@@ -214,3 +214,35 @@ class OverrideCategoria(SQLModel, table=True):
     descricao_normalizada: str = Field(primary_key=True)
     categoria_id: int = Field(foreign_key="categoria.id", index=True)
     criado_em: datetime = Field(default_factory=_agora_utc)
+
+
+ESCOPO_CASAL = "casal"
+ESCOPO_PESSOAL = "pessoal"
+ESCOPOS = {ESCOPO_CASAL, ESCOPO_PESSOAL}
+
+
+class EscopoCategoria(SQLModel, table=True):
+    """Override de escopo (casal/pessoal) por categoria."""
+
+    __tablename__ = "escopo_categoria"
+    __table_args__ = _TABLE_ARGS
+
+    categoria_id: int = Field(foreign_key="categoria.id", primary_key=True)
+    escopo: str = Field(index=True)
+    criado_em: datetime = Field(default_factory=_agora_utc)
+
+
+class OrcamentoMeta(SQLModel, table=True):
+    """Meta de orçamento mensal — casal ou pessoal."""
+
+    __tablename__ = "orcamento_meta"
+    __table_args__ = _TABLE_ARGS
+
+    id: int | None = Field(default=None, primary_key=True)
+    referencia_mes: str = Field(index=True)
+    escopo: str = Field(index=True)
+    pessoa_id: int | None = Field(default=None, foreign_key="pessoa.id", index=True)
+    categoria_id: int | None = Field(default=None, foreign_key="categoria.id", index=True)
+    valor_limite: Decimal = Field(max_digits=12, decimal_places=2)
+    criado_em: datetime = Field(default_factory=_agora_utc)
+    atualizado_em: datetime = Field(default_factory=_agora_utc)
