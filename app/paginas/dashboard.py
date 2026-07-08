@@ -26,6 +26,15 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from analytics.escopo import (
+    marcar_escopo as _marcar_escopo,
+)
+from analytics.escopo import (
+    projetar_despesa_mes,
+    resumo_escopo_despesas,
+    resumo_por_pessoa,
+)
+from analytics.orcamento import calcular_progressos, listar_alertas, resumo_alertas
 from app.estado import (
     CHAVE_ANO,
     CHAVE_MES,
@@ -45,6 +54,8 @@ from app.helpers import (
     selecionar_ano,
     selecionar_mes,
 )
+from app.ui_orcamento import render_barra_limite
+from db.repository import listar_escopos_categoria_dict, listar_orcamentos_df
 
 MODO_ANUAL = "Ano inteiro"
 MODO_MENSAL = "Mensal"
@@ -365,6 +376,156 @@ def _soma_grupo(df: pd.DataFrame, chave: str) -> float:
     return float(sub["valor"].abs().sum())
 
 
+def _banner_alertas_orcamento(progressos: pd.DataFrame) -> None:
+    """Destaque visual no topo quando metas estão em alerta ou estouradas."""
+    resumo = resumo_alertas(progressos)
+    if resumo["estourado"] == 0 and resumo["alerta"] == 0:
+        return
+
+    partes: list[str] = []
+    if resumo["estourado"]:
+        n = resumo["estourado"]
+        partes.append(f"**{n} meta(s) estourada(s)**")
+    if resumo["alerta"]:
+        n = resumo["alerta"]
+        partes.append(f"**{n} meta(s) acima de 80%**")
+
+    alertas = listar_alertas(progressos)
+    if resumo["estourado"]:
+        st.error("⚠️ Orçamento: " + " · ".join(partes))
+    else:
+        st.warning("🟡 Orçamento: " + " · ".join(partes))
+
+    for row in alertas.itertuples(index=False):
+        if row.status == "estourado":
+            st.error(
+                f"**{row.rotulo}** — {formatar_brl(row.gasto)} de "
+                f"{formatar_brl(row.limite)} ({row.pct:.0f}%). "
+                f"Estourou em {formatar_brl(row.gasto - row.limite)}."
+            )
+        else:
+            st.warning(
+                f"**{row.rotulo}** — {formatar_brl(row.gasto)} de "
+                f"{formatar_brl(row.limite)} ({row.pct:.0f}%)."
+            )
+
+
+def _grafico_casal_pessoal(resumo: dict[str, float], por_pessoa: pd.DataFrame) -> None:
+    """Donut casal vs pessoal + barras por titular."""
+    total = resumo["total"]
+    if total <= 0:
+        st.info("Sem despesas no período.")
+        return
+
+    col_donut, col_barras = st.columns([1, 1])
+
+    with col_donut:
+        fatias = pd.DataFrame(
+            {
+                "escopo": ["Casal", "Pessoal"],
+                "valor": [resumo["casal"], resumo["pessoal"]],
+            }
+        )
+        fig = px.pie(
+            fatias,
+            names="escopo",
+            values="valor",
+            hole=0.55,
+            title="Divisão das despesas",
+            color="escopo",
+            color_discrete_map={"Casal": "#2563EB", "Pessoal": "#F59E0B"},
+        )
+        fig.update_traces(textposition="inside", textinfo="percent+label")
+        fig.update_layout(showlegend=False, margin=dict(t=40, b=20, l=20, r=20))
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_barras:
+        if por_pessoa.empty:
+            pct_casal = resumo["casal"] / total * 100
+            st.markdown("**Participação**")
+            st.progress(resumo["casal"] / total)
+            st.caption(f"Casal {pct_casal:.0f}% · Pessoal {100 - pct_casal:.0f}%")
+        else:
+            st.markdown("**Gastos pessoais por titular**")
+            fig = px.bar(
+                por_pessoa,
+                x="total",
+                y="pessoa",
+                orientation="h",
+                text=por_pessoa["total"].map(lambda v: formatar_brl(float(v))),
+                color_discrete_sequence=["#F59E0B"],
+            )
+            fig.update_traces(textposition="inside", insidetextanchor="end")
+            fig.update_layout(
+                yaxis_title="",
+                xaxis_title="",
+                margin=dict(t=10, b=10, l=10, r=10),
+                height=max(160, 56 * len(por_pessoa)),
+            )
+            fig.update_xaxes(visible=False)
+            st.plotly_chart(fig, use_container_width=True)
+
+
+def _painel_escopo_e_orcamento(
+    df_fluxo: pd.DataFrame, ref_mes: str | None
+) -> None:
+    """Gastos casal vs pessoal, projeção mensal e progresso de orçamento."""
+    if df_fluxo.empty:
+        return
+
+    overrides = listar_escopos_categoria_dict()
+    marcado = _marcar_escopo(df_fluxo, overrides_categoria=overrides)
+    resumo = resumo_escopo_despesas(marcado)
+    por_pessoa = resumo_por_pessoa(marcado)
+
+    st.subheader("Casal vs pessoal")
+    col_kpi, col_proj = st.columns([3, 1])
+    with col_kpi:
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Gastos do casal", formatar_brl(resumo["casal"]))
+        k2.metric("Gastos pessoais", formatar_brl(resumo["pessoal"]))
+        k3.metric("Total", formatar_brl(resumo["total"]))
+    with col_proj:
+        if ref_mes:
+            proj = projetar_despesa_mes(marcado, referencia_mes=ref_mes)
+            if proj is not None:
+                st.metric(
+                    "Projeção fim do mês",
+                    formatar_brl(proj),
+                    help="Estimativa pelo ritmo de gasto até hoje.",
+                )
+
+    _grafico_casal_pessoal(resumo, por_pessoa)
+
+    if ref_mes:
+        metas = listar_orcamentos_df(ref_mes)
+        if not metas.empty:
+            progressos = calcular_progressos(
+                marcado, metas, overrides_categoria=overrides
+            )
+            _banner_alertas_orcamento(progressos)
+            st.subheader("Tetos do mês")
+            st.caption(
+                "Gastos reais do período vs tetos cadastrados em **Orçamento**. "
+                "Classificação casal/pessoal segue as regras automáticas "
+                "(casa fixa, financiamento → casal; demais → titular do cartão)."
+            )
+            for row in progressos.itertuples(index=False):
+                render_barra_limite(
+                    row.rotulo,
+                    row.gasto,
+                    row.limite,
+                    row.pct,
+                    row.status,
+                )
+            st.caption("Ajuste os tetos na página **Orçamento**.")
+        else:
+            st.info(
+                "Nenhum teto definido para este mês. "
+                "Vá em **Orçamento** para estipular os valores máximos."
+            )
+
+
 def _kpis_grupos_despesa(
     df_periodo: pd.DataFrame, *, titulo_periodo: str
 ) -> None:
@@ -610,6 +771,13 @@ def render() -> None:
     st.divider()
     _kpis_grupos_despesa(df_fluxo, titulo_periodo=titulo_periodo)
     _top_categorias_periodo(df_fluxo, titulo_periodo=titulo_periodo)
+
+    st.divider()
+    if modo == MODO_MENSAL and ref_selecionada:
+        df_painel = df_recorte[df_recorte["referencia_mes"] == ref_selecionada]
+        _painel_escopo_e_orcamento(df_painel, ref_selecionada)
+    else:
+        _painel_escopo_e_orcamento(df_recorte, None)
 
     # Persiste filtros globais na URL (idempotente). Roda no fim do
     # render pra capturar o último valor dos widgets.

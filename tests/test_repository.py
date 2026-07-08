@@ -585,3 +585,32 @@ def test_planilha_lancamento_herda_conta_tipo_existente(banco_temporario):
     planilha = df[df["fonte"] == FONTE_PLANILHA]
     assert len(planilha) == 1
     assert planilha["conta_tipo"].iloc[0] == "cartao_credito"
+
+
+def test_copiar_orcamentos_de_mes(banco_temporario):
+    from analytics.escopo import ESCOPO_CASAL
+    from db.repository import (
+        copiar_orcamentos_de_mes,
+        listar_orcamentos_df,
+        salvar_orcamento_meta,
+    )
+
+    salvar_orcamento_meta(
+        referencia_mes="2026-04",
+        escopo=ESCOPO_CASAL,
+        valor_limite=3000.0,
+    )
+    salvar_orcamento_meta(
+        referencia_mes="2026-05",
+        escopo=ESCOPO_CASAL,
+        valor_limite=2500.0,
+    )
+
+    n = copiar_orcamentos_de_mes("2026-04", "2026-05")
+    assert n == 0
+
+    n = copiar_orcamentos_de_mes("2026-04", "2026-06")
+    assert n == 1
+    metas = listar_orcamentos_df("2026-06")
+    assert len(metas) == 1
+    assert float(metas.iloc[0]["valor_limite"]) == 3000.0

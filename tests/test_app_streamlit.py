@@ -26,6 +26,8 @@ PAGINAS = [
     "app/paginas/dashboard.py",
     "app/paginas/lancamentos.py",
     "app/paginas/recorrentes.py",
+    "app/paginas/orcamento.py",
+    "app/paginas/casal.py",
     "app/paginas/faturas.py",
     "app/paginas/categorias.py",
     "app/paginas/importar.py",
@@ -215,9 +217,8 @@ def test_dashboard_alterna_para_visao_mensal(banco_temporario) -> None:
     assert not at.exception
     # Ano (1) + Mês (1) = 2 selectboxes no modo mensal
     assert len(at.selectbox) == 2
-    # 4 KPIs do topo (Despesas/Receitas/Saldo/Qtde) + 4 KPIs de grupos
-    # de despesa (Cartões/Financiamentos/Casa Fixa/Empréstimos).
-    assert len(at.metric) == 8
+    # 4 KPIs do topo + 3 casal/pessoal/total + 4 grupos de despesa
+    assert len(at.metric) == 11
 
 
 def test_importar_pdf_via_uploader(banco_temporario, tmp_path) -> None:

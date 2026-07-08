@@ -74,6 +74,16 @@ def main() -> None:
             icon=":material/autorenew:",
         ),
         st.Page(
+            str(PAGINAS / "orcamento.py"),
+            title="Orçamento",
+            icon=":material/savings:",
+        ),
+        st.Page(
+            str(PAGINAS / "casal.py"),
+            title="Casal",
+            icon=":material/favorite:",
+        ),
+        st.Page(
             str(PAGINAS / "faturas.py"),
             title="Faturas",
             icon=":material/receipt_long:",

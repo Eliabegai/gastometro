@@ -37,6 +37,11 @@ def formatar_brl(valor: float | int) -> str:
     return f"-R$ {s}" if valor < 0 else f"R$ {s}"
 
 
+def formatar_brl_md(valor: float | int) -> str:
+    """`formatar_brl` seguro para `st.markdown` / `st.caption` (escapa `$`)."""
+    return formatar_brl(valor).replace("$", r"\$")
+
+
 def ref_para_nome_br(iso: str | None) -> str:
     """'2026-05' → 'Maio/2026'. Aceita já formatado."""
     if not iso:
