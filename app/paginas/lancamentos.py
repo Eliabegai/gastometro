@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from analytics.recorrentes import marcar_recorrentes, rotulo_tipo_recorrente
 from app.estado import (
     CHAVES_GLOBAIS,
     CHAVES_LANCAMENTOS,
@@ -87,12 +88,26 @@ def _tabela(df) -> None:
             "tipo": "Tipo",
             "fonte": "Fonte",
             "arquivo": "Arquivo origem",
+            "eh_recorrente": "Recorrente",
+            "grupo_recorrente": "Grupo recorrente",
+            "tipo_recorrente": "Tipo recorrente",
         }
     )
+    if "Recorrente" in visivel.columns:
+        visivel["Recorrente"] = visivel["Recorrente"].map(
+            {True: "🔁", False: ""}
+        )
+    if "Tipo recorrente" in visivel.columns:
+        visivel["Tipo recorrente"] = visivel["Tipo recorrente"].map(
+            lambda t: rotulo_tipo_recorrente(t) if t else ""
+        )
     colunas_ordem = [
         "Data",
         "Referência",
+        "Recorrente",
+        "Tipo recorrente",
         "Descrição",
+        "Grupo recorrente",
         "Categoria",
         "Cartão / Conta",
         "Pessoa",
@@ -184,6 +199,17 @@ def render() -> None:
 
     filtros = sidebar_filtros_lancamentos(df_periodo)
     sub = aplicar_filtros(df_periodo, **filtros)
+
+    so_recorrentes = st.sidebar.checkbox(
+        "Só recorrentes",
+        value=False,
+        help="Mostra apenas lançamentos que fazem parte de um "
+        "padrão detectado (assinatura, conta fixa, etc.).",
+    )
+    df_marcado = marcar_recorrentes(sub)
+    if so_recorrentes:
+        df_marcado = df_marcado[df_marcado["eh_recorrente"]]
+    sub = df_marcado
 
     if filtros.get("data_inicio") and filtros.get("data_fim"):
         ini = filtros["data_inicio"]

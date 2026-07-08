@@ -509,47 +509,9 @@ def _construir_top_comerciantes(
 def _construir_recorrentes(
     df_transacoes: pd.DataFrame, meses_min: int = 3
 ) -> pd.DataFrame:
-    if df_transacoes.empty or "Descrição" not in df_transacoes.columns:
-        return pd.DataFrame()
-    if "Referência" not in df_transacoes.columns:
-        return pd.DataFrame()
+    from analytics.recorrentes import construir_recorrentes_excel
 
-    gastos = df_transacoes[df_transacoes["Valor (R$)"] > 0].copy()
-    if gastos.empty:
-        return pd.DataFrame()
-
-    agg = (
-        gastos.groupby("Descrição")
-        .agg(
-            **{
-                "Meses": ("Referência", "nunique"),
-                "Qtde. Transações": ("Valor (R$)", "count"),
-                "Total (R$)": ("Valor (R$)", "sum"),
-                "Média Mensal (R$)": ("Valor (R$)", "sum"),
-                "Categoria": ("Categoria", lambda s: s.mode().iat[0] if not s.mode().empty else ""),
-                "Cartão(ões)": ("Cartão", lambda s: ", ".join(sorted({str(v) for v in s if str(v).strip()}))),
-            }
-        )
-        .reset_index()
-    )
-    agg = agg[agg["Meses"] >= meses_min].copy()
-    if agg.empty:
-        return pd.DataFrame()
-    agg["Média Mensal (R$)"] = agg["Total (R$)"] / agg["Meses"]
-    agg = agg.sort_values(
-        ["Total (R$)", "Meses"], ascending=[False, False]
-    ).reset_index(drop=True)
-    return agg[
-        [
-            "Descrição",
-            "Categoria",
-            "Cartão(ões)",
-            "Meses",
-            "Qtde. Transações",
-            "Total (R$)",
-            "Média Mensal (R$)",
-        ]
-    ]
+    return construir_recorrentes_excel(df_transacoes, meses_min=meses_min)
 
 
 def _formatar_planilha(writer: object, nome_aba: str, df: pd.DataFrame) -> None:
