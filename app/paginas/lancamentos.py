@@ -198,7 +198,8 @@ def render() -> None:
     df_periodo = filtrar_por_periodo_global(df)
 
     filtros = sidebar_filtros_lancamentos(df_periodo)
-    sub = aplicar_filtros(df_periodo, **filtros)
+    texto_busca = filtros.get("texto")
+    sub = aplicar_filtros(df_periodo, **{**filtros, "texto": None})
 
     so_recorrentes = st.sidebar.checkbox(
         "Só recorrentes",
@@ -207,6 +208,14 @@ def render() -> None:
         "padrão detectado (assinatura, conta fixa, etc.).",
     )
     df_marcado = marcar_recorrentes(sub)
+    if texto_busca:
+        mask = df_marcado["descricao"].astype(str).str.contains(
+            texto_busca, case=False, na=False
+        )
+        mask = mask | df_marcado["grupo_recorrente"].astype(str).str.contains(
+            texto_busca, case=False, na=False
+        )
+        df_marcado = df_marcado[mask]
     if so_recorrentes:
         df_marcado = df_marcado[df_marcado["eh_recorrente"]]
     sub = df_marcado

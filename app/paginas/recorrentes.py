@@ -15,6 +15,7 @@ from analytics.recorrentes import (
     TIPOS_RECORRENTE,
     detectar_recorrentes,
     historico_mensal_padrao,
+    listar_lancamentos_padrao,
     listar_tipos_recorrente,
     rotulo_tipo_recorrente,
 )
@@ -117,6 +118,7 @@ def _tabela_padroes(padroes: pd.DataFrame) -> None:
     visivel = visivel.rename(
         columns={
             "descricao": "Descrição",
+            "descricao_fatura": "Texto na fatura",
             "categoria": "Categoria",
             "contas": "Conta(s)",
             "meses": "Meses ativos",
@@ -132,6 +134,7 @@ def _tabela_padroes(padroes: pd.DataFrame) -> None:
             [
                 "Tipo",
                 "Descrição",
+                "Texto na fatura",
                 "Categoria",
                 "Conta(s)",
                 "Meses ativos",
@@ -167,10 +170,35 @@ def _detalhe_padrao(df: pd.DataFrame, padroes: pd.DataFrame) -> None:
     descricao = escolha.split(" — ", 1)[1]
     linha = padroes.loc[padroes["descricao"] == descricao].iloc[0]
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Tipo", rotulo_tipo_recorrente(linha["tipo_recorrente"]))
     c2.metric("Média mensal", formatar_brl(float(linha["media_mensal"])))
     c3.metric("Meses ativos", int(linha["meses"]))
+    if "descricao_fatura" in linha and str(linha["descricao_fatura"]) != str(linha["descricao"]):
+        c4.metric("Texto na fatura", str(linha["descricao_fatura"])[:28])
+
+    lancamentos = listar_lancamentos_padrao(df, linha["chave"])
+    if not lancamentos.empty:
+        st.caption(
+            "Lançamentos que compõem este padrão. Se não aparecem em "
+            "**Lançamentos**, verifique o filtro de **ano** no Dashboard "
+            "(ex.: este item pode ser de 2024)."
+        )
+        visivel = lancamentos.copy()
+        if "referencia_mes" in visivel.columns:
+            visivel["referencia_mes"] = visivel["referencia_mes"].map(ref_para_nome_br)
+        elif "referencia" in visivel.columns:
+            visivel = visivel.rename(columns={"referencia": "referencia_mes"})
+            visivel["referencia_mes"] = visivel["referencia_mes"].map(ref_para_nome_br)
+        st.dataframe(
+            visivel,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
+                "data": st.column_config.DateColumn(format="DD/MM/YYYY"),
+            },
+        )
 
     serie = historico_mensal_padrao(df, linha["chave"])
     if serie.empty:

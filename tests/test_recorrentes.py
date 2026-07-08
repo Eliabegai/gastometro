@@ -152,6 +152,34 @@ def test_marcar_recorrentes_adiciona_colunas():
     assert not marcado.loc[marcado["descricao"] == "UBER TRIP", "eh_recorrente"].iloc[0]
 
 
+def test_discovery_unifica_e_lista_lancamentos():
+    df = _df_lancamentos([
+        {
+            "descricao": "Discovery+ sem Anun...",
+            "valor": 18.90,
+            "referencia_mes": "2024-05",
+            "categoria": "Assinatura Digital",
+            "conta": "Nubank — Ana",
+        },
+        {
+            "descricao": "Discovery+ sem Anun...",
+            "valor": 18.90,
+            "referencia_mes": "2024-07",
+            "categoria": "Assinatura Digital",
+            "conta": "Nubank — Ana",
+        },
+    ])
+    padroes = detectar_recorrentes(df, meses_min=3, meses_min_assinatura=2)
+    assert len(padroes) == 1
+    assert padroes.iloc[0]["descricao"] == "Discovery+"
+    assert padroes.iloc[0]["descricao_fatura"] == "Discovery+ sem Anun..."
+
+    from analytics.recorrentes import listar_lancamentos_padrao
+
+    lancs = listar_lancamentos_padrao(df, padroes.iloc[0]["chave"])
+    assert len(lancs) == 2
+
+
 def test_construir_recorrentes_excel_formato_legado():
     df = pd.DataFrame([
         {

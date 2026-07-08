@@ -94,6 +94,7 @@ _KEYWORDS_ASSINATURA = (
     "prime video",
     "hbo",
     "disney",
+    "discovery",
     "apple.com",
     "apple combill",
     "google play",
@@ -118,6 +119,7 @@ _KEYWORDS_ASSINATURA = (
 _RE_SEPARADORES = re.compile(r"[./\\\-_*|+]+")
 _RE_SUFIXO_NUM = re.compile(r"\s+\d{2,}$")
 _RE_SUFIXO_PARCELA = re.compile(r"\s+\d{1,2}/\d{1,2}$")
+_RE_SUFIXO_RETICENCIAS = re.compile(r"\.{2,}$")
 _RE_PREFIXOS_COBRANCA = re.compile(
     r"^(dm|google|apple|paypal|mercadopago|mp|amazon|msft|microsoft|help)\s+"
 )
@@ -246,6 +248,7 @@ def chave_merchant(descricao: str) -> str:
     base = _normalizar(descricao)
     base = _RE_SEPARADORES.sub(" ", base)
     base = " ".join(base.split())
+    base = _RE_SUFIXO_RETICENCIAS.sub("", base).strip()
 
     servico = _extrair_servico_canonico(base)
     if servico:
@@ -335,6 +338,7 @@ def detectar_recorrentes(
         return round((row["valor_max"] - row["valor_min"]) / row["valor_min"] * 100, 1)
 
     agg["variacao_pct"] = agg.apply(_variacao, axis=1)
+    agg["descricao_fatura"] = agg["descricao"]
     agg["descricao"] = agg.apply(
         lambda row: _descricao_exibicao(row["_chave"], row["descricao"]),
         axis=1,
@@ -458,3 +462,30 @@ def historico_mensal_padrao(
         .sort_values("referencia_mes")
     )
     return serie.reset_index(drop=True)
+
+
+def listar_lancamentos_padrao(
+    df: pd.DataFrame,
+    chave: str,
+) -> pd.DataFrame:
+    """Lançamentos individuais que compõem um padrão recorrente."""
+    cols = _resolver_colunas(df)
+    gastos = _preparar_gastos(df, cols)
+    if gastos.empty:
+        return pd.DataFrame()
+
+    sub = gastos[gastos["_chave"] == chave].copy()
+    if sub.empty:
+        return pd.DataFrame()
+
+    resultado = sub.drop(columns=["_chave"], errors="ignore")
+    ordem = [
+        "data",
+        cols["referencia"],
+        cols["descricao"],
+        cols["valor"],
+        cols["categoria"],
+        cols["conta"],
+    ]
+    ordem = [c for c in ordem if c in resultado.columns]
+    return resultado[ordem].sort_values(cols["referencia"], ascending=True).reset_index(drop=True)

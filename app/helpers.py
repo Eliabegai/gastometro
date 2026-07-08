@@ -114,9 +114,12 @@ def aplicar_filtros(
     if data_fim is not None:
         sub = sub[sub["data"] <= data_fim]
     if texto:
-        sub = sub[
-            sub["descricao"].astype(str).str.contains(texto, case=False, na=False)
-        ]
+        mask = sub["descricao"].astype(str).str.contains(texto, case=False, na=False)
+        if "grupo_recorrente" in sub.columns:
+            mask = mask | sub["grupo_recorrente"].astype(str).str.contains(
+                texto, case=False, na=False
+            )
+        sub = sub[mask]
     return sub
 
 
