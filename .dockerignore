@@ -35,6 +35,7 @@ MELHORIAS.md
 .envrc
 .env
 .env.*
+.streamlit/secrets.toml
 
 # IDE / OS
 .vscode/

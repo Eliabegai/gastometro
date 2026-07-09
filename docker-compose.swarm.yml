@@ -1,0 +1,45 @@
+# Deploy Swarm + Traefik (túnel/domínio público).
+#
+# Pré-requisitos no `.env` (carregado pelo deploy.ps1):
+#   GASTOMETRO_AUTH_ENABLED=true
+#   GASTOMETRO_ALLOWED_EMAILS=voce@gmail.com,outro@gmail.com
+#   + `.streamlit/secrets.toml` com redirect_uri HTTPS do domínio
+#
+services:
+  gastometro:
+    image: gastometro:latest
+    environment:
+      GASTOMETRO_DADOS_DIR: /data
+      GASTOMETRO_BACKUPS_KEEP: "30"
+      TZ: America/Sao_Paulo
+      GASTOMETRO_PLANILHA_URL: ${GASTOMETRO_PLANILHA_URL:-}
+      # Login Google — obrigatório em deploy público (default: off).
+      GASTOMETRO_AUTH_ENABLED: ${GASTOMETRO_AUTH_ENABLED:-false}
+      GASTOMETRO_ALLOWED_EMAILS: ${GASTOMETRO_ALLOWED_EMAILS:-}
+      # Necessário atrás de qualquer proxy/tunnel (Cloudflare, ngrok, etc.)
+      # Sem isso o file_uploader quebra e os websockets reconectam em loop.
+      STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION: "false"
+      STREAMLIT_SERVER_ENABLE_CORS: "false"
+    volumes:
+      - ./dados:/data
+      - ./entrada:/app/entrada
+      - ./saida:/app/saida
+      # OAuth Google (client_id, client_secret, cookie_secret, redirect_uri).
+      - ./.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro
+    networks:
+      - proxy
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.gastometro.rule=Host(`gastometro.homeliabe.com.br`)"
+        - "traefik.http.routers.gastometro.entrypoints=websecure"
+        - "traefik.http.routers.gastometro.tls=true"
+        - "traefik.http.services.gastometro.loadbalancer.server.port=8501"
+
+networks:
+  proxy:
+    external: true
+    name: proxy
