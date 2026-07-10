@@ -127,6 +127,103 @@ def test_upsert_fatura_idempotente(banco_temporario):
     assert len(listar_lancamentos_df()) == 3
 
 
+def test_upsert_fatura_nao_duplica_mesmo_mes_arquivo_diferente(banco_temporario):
+    """Re-import do mesmo mês com nome renomeado não duplica lançamentos."""
+    from db.repository import (
+        listar_faturas_df,
+        listar_lancamentos_df,
+        upsert_fatura,
+    )
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+    fat_id2, inseridos2 = upsert_fatura(
+        _fatura_demo(), arquivo="Fatura_Demo__20260708_135602.pdf"
+    )
+
+    assert inseridos2 == 0
+    assert fat_id2 is not None
+    assert len(listar_faturas_df()) == 1
+    assert len(listar_lancamentos_df()) == 3
+
+
+def test_remover_faturas_pdf_duplicadas(banco_temporario):
+    """Backfill apaga faturas duplicadas do mesmo cartão/mês."""
+    from sqlmodel import select
+
+    from db.engine import get_session
+    from db.models import Fatura, Lancamento
+    from db.repository import (
+        hash_lancamento_pdf,
+        listar_faturas_df,
+        listar_lancamentos_df,
+        remover_faturas_pdf_duplicadas,
+        upsert_fatura,
+    )
+
+    upsert_fatura(_fatura_demo(), arquivo="Fatura_Demo.pdf")
+
+    with get_session() as session:
+        original = session.exec(
+            select(Fatura).where(Fatura.arquivo == "Fatura_Demo.pdf")
+        ).one()
+        duplicada = Fatura(
+            conta_id=original.conta_id,
+            arquivo="Fatura_Demo__20260708_135602.pdf",
+            referencia_mes=original.referencia_mes,
+            fechamento=original.fechamento,
+            vencimento=original.vencimento,
+            valor_total_declarado=original.valor_total_declarado,
+            qtde_transacoes=original.qtde_transacoes,
+        )
+        session.add(duplicada)
+        session.flush()
+
+        for lanc in session.exec(
+            select(Lancamento).where(Lancamento.fatura_id == original.id)
+        ).all():
+            session.add(
+                Lancamento(
+                    data=lanc.data,
+                    descricao=lanc.descricao,
+                    valor=lanc.valor,
+                    tipo=lanc.tipo,
+                    categoria_id=lanc.categoria_id,
+                    conta_id=lanc.conta_id,
+                    pessoa_id=lanc.pessoa_id,
+                    fatura_id=duplicada.id,
+                    referencia_mes=lanc.referencia_mes,
+                    parcela_atual=lanc.parcela_atual,
+                    parcela_total=lanc.parcela_total,
+                    cidade=lanc.cidade,
+                    fonte=lanc.fonte,
+                    arquivo_origem=duplicada.arquivo,
+                    hash_dedupe=hash_lancamento_pdf(
+                        arquivo=duplicada.arquivo,
+                        data=lanc.data,
+                        descricao=lanc.descricao,
+                        valor=lanc.valor,
+                        conta_nome="Demo — Joao Silva",
+                        parcela_atual=lanc.parcela_atual,
+                    ),
+                )
+            )
+
+    assert len(listar_faturas_df()) == 2
+    assert len(listar_lancamentos_df()) == 6
+
+    resultado = remover_faturas_pdf_duplicadas()
+    assert resultado["grupos"] == 1
+    assert resultado["faturas_removidas"] == 1
+    assert resultado["lancamentos_removidos"] == 3
+
+    assert len(listar_faturas_df()) == 1
+    assert len(listar_lancamentos_df()) == 3
+    assert listar_faturas_df()["arquivo"].iloc[0] == "Fatura_Demo.pdf"
+
+    resultado2 = remover_faturas_pdf_duplicadas()
+    assert resultado2["faturas_removidas"] == 0
+
+
 def test_hash_dedupe_diferencia_parcelas(banco_temporario):
     """Mesma desc+valor em parcelas distintas (1/12 vs 2/12) não colapsam."""
     from db.repository import listar_lancamentos_df, upsert_fatura

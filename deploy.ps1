@@ -51,6 +51,20 @@ Write-Host "Auth Google: ON ($allowedEmails)"
 Write-Host "Deploying stack 'gastometro'..."
 docker stack deploy -c (Join-Path $root "docker-compose.swarm.yml") gastometro
 
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Stack deploy falhou"
+}
+
+# Swarm não detecta rebuild local da mesma tag :latest — o spec não muda
+# e o container antigo continua rodando. Força recriação com a imagem nova.
+$serviceName = "gastometro_gastometro"
+Write-Host "Recriando servico $serviceName com a imagem recém-buildada..."
+docker service update --image gastometro:latest --force --detach=false $serviceName
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Atualizacao do servico falhou"
+}
+
 Write-Host ""
 Write-Host "Status:"
 docker stack services gastometro

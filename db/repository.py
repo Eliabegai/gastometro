@@ -26,6 +26,7 @@ from db.engine import get_session
 from db.models import (
     ESCOPO_CASAL,
     ESCOPO_PESSOAL,
+    FONTE_EXCEL_LEGADO,
     FONTE_PDF,
     FONTE_PLANILHA,
     TIPO_CATEGORIA_DESPESA,
@@ -49,6 +50,10 @@ from parsers.base import (
 
 RE_DATA_BR = re.compile(r"^(\d{2})/(\d{2})/(\d{4})$")
 RE_REFERENCIA_NOME = re.compile(r"^(\w+)/(\d{4})$")
+# Sufixo gerado por `_nome_unico` ao arquivar PDF com mesmo nome em `entrada/`.
+RE_ARQUIVO_TIMESTAMP = re.compile(r"__\d{8}_\d{6}(?=\.pdf$)", re.IGNORECASE)
+
+FONTES_DETALHE_PDF = (FONTE_PDF, FONTE_EXCEL_LEGADO)
 
 MES_NOME_PARA_NUMERO = {
     "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4,
@@ -309,6 +314,46 @@ def _categorizar_para_id(
     return cat.id, nome
 
 
+def _lancamento_pdf_semantico_existe(
+    session: Session,
+    *,
+    conta_id: int,
+    data_tx: date,
+    descricao: str,
+    valor: Decimal,
+    parcela_atual: int | None,
+) -> bool:
+    """Já existe lançamento granular equivalente nessa conta?
+
+    Compara data + descrição normalizada + valor + parcela, ignorando
+    o nome do arquivo PDF. Evita duplicar quando o mesmo extrato é
+    reimportado com nome diferente (ex.: sufixo `__20260708_135602`).
+    """
+    norm = normalizar_descricao(descricao)
+    valor_abs = abs(valor)
+    stmt = select(Lancamento).where(
+        Lancamento.conta_id == conta_id,
+        Lancamento.data == data_tx,
+        Lancamento.valor == valor_abs,
+        Lancamento.fonte.in_(FONTES_DETALHE_PDF),
+    )
+    if parcela_atual is not None:
+        stmt = stmt.where(Lancamento.parcela_atual == parcela_atual)
+    else:
+        stmt = stmt.where(Lancamento.parcela_atual.is_(None))
+
+    for lanc in session.exec(stmt).all():
+        if normalizar_descricao(lanc.descricao) == norm:
+            return True
+    return False
+
+
+def _score_fatura_para_manter(fatura: Fatura) -> tuple[int, int]:
+    """Menor score = fatura a preservar em duplicatas do mesmo mês."""
+    tem_timestamp = bool(RE_ARQUIVO_TIMESTAMP.search(fatura.arquivo))
+    return (1 if tem_timestamp else 0, fatura.id or 0)
+
+
 def _tipo_lancamento_pdf(valor: Decimal, categoria_nome: str) -> str:
     """Decide tipo a partir do sinal do valor (PDFs).
 
@@ -335,7 +380,10 @@ def upsert_fatura(
     Devolve `(fatura_id, qtde_lancamentos_inseridos)`. Idempotente:
     - Fatura já existente (mesmo `arquivo`) → não duplica; devolve
       o ID existente e 0 inseridos.
-    - Lançamentos duplicados (mesmo `hash_dedupe`) → ignorados.
+    - Fatura já existente (mesma `conta` + `referencia_mes`) → reusa o
+      cabeçalho e só insere lançamentos realmente novos.
+    - Lançamentos duplicados (mesmo `hash_dedupe` ou equivalente
+      semântico na conta) → ignorados.
 
     Parâmetros:
       - `respeitar_categoria_existente`: quando `True`, usa
@@ -402,19 +450,33 @@ def upsert_fatura(
     vencimento = parse_data_br(meta.data_vencimento)
     fechamento = parse_data_br(meta.data_fechamento)
 
-    fatura = Fatura(
-        conta_id=conta.id,
-        arquivo=arquivo,
-        referencia_mes=referencia or "",
-        fechamento=fechamento,
-        vencimento=vencimento,
-        valor_total_declarado=(
-            _arred(meta.valor_total) if meta.valor_total else None
-        ),
-        qtde_transacoes=len(fatura_pdf.transacoes),
-    )
-    session.add(fatura)
-    session.flush()
+    fatura_existente_mes: Fatura | None = None
+    if referencia:
+        fatura_existente_mes = session.exec(
+            select(Fatura)
+            .where(
+                Fatura.conta_id == conta.id,
+                Fatura.referencia_mes == referencia,
+            )
+            .order_by(Fatura.id)
+        ).first()
+
+    if fatura_existente_mes is not None:
+        fatura = fatura_existente_mes
+    else:
+        fatura = Fatura(
+            conta_id=conta.id,
+            arquivo=arquivo,
+            referencia_mes=referencia or "",
+            fechamento=fechamento,
+            vencimento=vencimento,
+            valor_total_declarado=(
+                _arred(meta.valor_total) if meta.valor_total else None
+            ),
+            qtde_transacoes=len(fatura_pdf.transacoes),
+        )
+        session.add(fatura)
+        session.flush()
 
     # Cenário-chave do bug de duplicação: planilha familiar foi
     # importada ANTES desse PDF chegar. A regra de skip no
@@ -447,6 +509,15 @@ def upsert_fatura(
         if session.exec(
             select(Lancamento.id).where(Lancamento.hash_dedupe == h)
         ).first():
+            continue
+        if _lancamento_pdf_semantico_existe(
+            session,
+            conta_id=conta.id,
+            data_tx=data_tx,
+            descricao=tx.descricao,
+            valor=valor,
+            parcela_atual=parcela_atual,
+        ):
             continue
 
         if respeitar_categoria_existente and tx.categoria:
@@ -482,6 +553,54 @@ def upsert_fatura(
         inseridos += 1
 
     return fatura.id, inseridos
+
+
+def remover_faturas_pdf_duplicadas(
+    session: Session | None = None,
+) -> dict[str, int]:
+    """Remove faturas PDF duplicadas (mesma conta + referência).
+
+    Mantém a fatura com nome canônico (sem sufixo `__YYYYMMDD_HHMMSS`
+    do arquivamento) e apaga as demais junto com seus lançamentos.
+    Idempotente.
+
+    Devolve `{"grupos": N, "faturas_removidas": F, "lancamentos_removidos": L}`.
+    """
+    if session is None:
+        with get_session() as s:
+            return remover_faturas_pdf_duplicadas(session=s)
+
+    grupos: dict[tuple[int, str], list[Fatura]] = {}
+    for fat in session.exec(select(Fatura)).all():
+        if not fat.referencia_mes:
+            continue
+        grupos.setdefault((fat.conta_id, fat.referencia_mes), []).append(fat)
+
+    faturas_removidas = 0
+    lancamentos_removidos = 0
+    grupos_afetados = 0
+
+    for fats in grupos.values():
+        if len(fats) < 2:
+            continue
+        grupos_afetados += 1
+        ordenadas = sorted(fats, key=_score_fatura_para_manter)
+        for fat in ordenadas[1:]:
+            lancs = session.exec(
+                select(Lancamento).where(Lancamento.fatura_id == fat.id)
+            ).all()
+            for lanc in lancs:
+                session.delete(lanc)
+                lancamentos_removidos += 1
+            session.flush()
+            session.delete(fat)
+            faturas_removidas += 1
+
+    return {
+        "grupos": grupos_afetados,
+        "faturas_removidas": faturas_removidas,
+        "lancamentos_removidos": lancamentos_removidos,
+    }
 
 
 def _remover_planilha_duplicada(

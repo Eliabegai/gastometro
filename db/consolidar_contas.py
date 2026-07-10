@@ -226,11 +226,15 @@ def main() -> None:
     # 3. Limpa duplicação planilha×PDF — depois do merge, planilha
     #    histórica pode coexistir com PDF migrado pra mesma conta.
     # 4. Remove Pessoas fantasma — sem contas, sem lançamentos.
-    from db.repository import limpar_planilha_quando_pdf_existe
+    from db.repository import (
+        limpar_planilha_quando_pdf_existe,
+        remover_faturas_pdf_duplicadas,
+    )
 
     res_p = consolidar_pessoas()
     res_c = consolidar()
     res_planilha = limpar_planilha_quando_pdf_existe()
+    res_faturas = remover_faturas_pdf_duplicadas()
     orfas = remover_pessoas_orfas()
 
     print("Consolidação concluída.")
@@ -250,10 +254,16 @@ def main() -> None:
     print("Planilha × PDF:")
     print(f"  Faturas examinadas      : {res_planilha['faturas_examinadas']}")
     print(f"  Linhas planilha apagadas: {res_planilha['lancamentos_removidos']}")
+    print()
+    print("Faturas PDF duplicadas:")
+    print(f"  Grupos (conta+mês)      : {res_faturas['grupos']}")
+    print(f"  Faturas removidas       : {res_faturas['faturas_removidas']}")
+    print(f"  Lançamentos removidos   : {res_faturas['lancamentos_removidos']}")
     nada_a_fazer = (
         not any(res_p.values())
         and not any(res_c.values())
         and not res_planilha["lancamentos_removidos"]
+        and not res_faturas["faturas_removidas"]
         and not orfas
     )
     if nada_a_fazer:
