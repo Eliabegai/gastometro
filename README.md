@@ -692,6 +692,54 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml \
 
 Acesse `https://gastometro.seudominio.com` → botão **Entrar com Google**.
 
+#### 5. Atualizar o projeto no Swarm (`deploy.ps1`)
+
+Quando o app já está no **Docker Swarm** (stack `gastometro` + Traefik,
+via `docker-compose.swarm.yml`), use o script PowerShell na raiz para
+rebuildar a imagem e aplicar a atualização:
+
+```powershell
+# Na raiz do projeto, no host do Swarm (Windows PowerShell):
+.\deploy.ps1
+```
+
+O script faz, nesta ordem:
+
+1. `docker build -t gastometro:latest` — rebuild da imagem com o código atual
+2. Carrega o `.env` e **exige** auth Google ligada (`GASTOMETRO_AUTH_ENABLED=true`,
+   `GASTOMETRO_ALLOWED_EMAILS` preenchido e `.streamlit/secrets.toml` presente)
+3. `docker stack deploy -c docker-compose.swarm.yml gastometro`
+4. `docker service update --image gastometro:latest --force` — recria o
+   container com a imagem nova
+
+> **Por que o `--force`?** O Swarm compara o *spec* do serviço. Como a
+> tag continua `gastometro:latest`, ele não detecta o rebuild sozinho e
+> o container antigo seguiria rodando. O `deploy.ps1` força a recriação.
+
+Pré-requisitos no host:
+
+- Docker em modo Swarm (`docker swarm init` já feito)
+- Rede externa `proxy` (Traefik) criada
+- `.env` e `.streamlit/secrets.toml` configurados (mesma regra do deploy público)
+
+Comandos úteis depois do deploy:
+
+```powershell
+docker stack services gastometro
+docker service logs -f gastometro_gastometro
+```
+
+Se o código parecer antigo mesmo após o script, force rebuild sem cache
+e rode de novo:
+
+```powershell
+docker build --no-cache -t gastometro:latest .
+.\deploy.ps1
+```
+
+> Em ambiente **só Compose** (sem Swarm), continue usando
+> `docker compose up -d --build` — o `deploy.ps1` é específico do Swarm.
+
 #### Dev local sem login
 
 ```bash
@@ -908,6 +956,9 @@ gastometro/
 ├── tests/                         # pytest (parsers, repo, export, app)
 ├── Dockerfile                     # imagem multi-arch (amd64 + arm64)
 ├── docker-compose.yml             # serviço gastometro + Litestream opcional
+├── docker-compose.prod.yml        # overlay HTTPS (Caddy) — profile prod
+├── docker-compose.swarm.yml       # stack Swarm + labels Traefik
+├── deploy.ps1                     # build + stack deploy + force update (Swarm)
 ├── .dockerignore                  # enxuga a imagem (sem .venv, dados, tests…)
 ├── pyproject.toml                 # build + ruff + mypy + pytest
 ├── requirements.txt
