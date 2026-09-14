@@ -28,6 +28,7 @@ def _agora_utc() -> datetime:
     `timezone.utc` em vez de `datetime.UTC` por compat com Python 3.10."""
     return datetime.now(timezone.utc)
 
+
 TIPO_CONTA_CARTAO = "cartao_credito"
 TIPO_CONTA_CORRENTE = "conta_corrente"
 TIPO_CONTA_DINHEIRO = "dinheiro"
@@ -139,9 +140,7 @@ class Fatura(SQLModel, table=True):
     referencia_mes: str = Field(index=True)
     fechamento: date | None = Field(default=None)
     vencimento: date | None = Field(default=None)
-    valor_total_declarado: Decimal | None = Field(
-        default=None, max_digits=12, decimal_places=2
-    )
+    valor_total_declarado: Decimal | None = Field(default=None, max_digits=12, decimal_places=2)
     qtde_transacoes: int = Field(default=0)
     criado_em: datetime = Field(default_factory=_agora_utc)
 
@@ -172,18 +171,10 @@ class Lancamento(SQLModel, table=True):
     valor: Decimal = Field(max_digits=12, decimal_places=2)
     tipo: str = Field(default=TIPO_LANCAMENTO_DESPESA, index=True)
 
-    categoria_id: int | None = Field(
-        default=None, foreign_key="categoria.id", index=True
-    )
-    conta_id: int | None = Field(
-        default=None, foreign_key="conta.id", index=True
-    )
-    pessoa_id: int | None = Field(
-        default=None, foreign_key="pessoa.id", index=True
-    )
-    fatura_id: int | None = Field(
-        default=None, foreign_key="fatura.id", index=True
-    )
+    categoria_id: int | None = Field(default=None, foreign_key="categoria.id", index=True)
+    conta_id: int | None = Field(default=None, foreign_key="conta.id", index=True)
+    pessoa_id: int | None = Field(default=None, foreign_key="pessoa.id", index=True)
+    fatura_id: int | None = Field(default=None, foreign_key="fatura.id", index=True)
 
     referencia_mes: str | None = Field(default=None, index=True)
     parcela_atual: int | None = Field(default=None)
@@ -244,5 +235,91 @@ class OrcamentoMeta(SQLModel, table=True):
     pessoa_id: int | None = Field(default=None, foreign_key="pessoa.id", index=True)
     categoria_id: int | None = Field(default=None, foreign_key="categoria.id", index=True)
     valor_limite: Decimal = Field(max_digits=12, decimal_places=2)
+    criado_em: datetime = Field(default_factory=_agora_utc)
+    atualizado_em: datetime = Field(default_factory=_agora_utc)
+
+
+TIPO_DIVIDA_IMOVEL = "financiamento_imovel"
+TIPO_DIVIDA_VEICULO = "financiamento_veiculo"
+TIPO_DIVIDA_PESSOAL = "emprestimo_pessoal"
+TIPO_DIVIDA_CONSIGNADO = "emprestimo_consignado"
+TIPO_DIVIDA_ESTUDANTIL = "emprestimo_estudantil"
+TIPO_DIVIDA_CARTAO = "cartao_credito"
+TIPO_DIVIDA_CHEQUE_ESPECIAL = "cheque_especial"
+TIPO_DIVIDA_OUTRO = "outro"
+TIPOS_DIVIDA = {
+    TIPO_DIVIDA_IMOVEL,
+    TIPO_DIVIDA_VEICULO,
+    TIPO_DIVIDA_PESSOAL,
+    TIPO_DIVIDA_CONSIGNADO,
+    TIPO_DIVIDA_ESTUDANTIL,
+    TIPO_DIVIDA_CARTAO,
+    TIPO_DIVIDA_CHEQUE_ESPECIAL,
+    TIPO_DIVIDA_OUTRO,
+}
+
+STATUS_DIVIDA_ATIVA = "ativa"
+STATUS_DIVIDA_QUITADA = "quitada"
+STATUS_DIVIDA_RENEGOCIADA = "renegociada"
+STATUS_DIVIDA = {
+    STATUS_DIVIDA_ATIVA,
+    STATUS_DIVIDA_QUITADA,
+    STATUS_DIVIDA_RENEGOCIADA,
+}
+
+SISTEMA_PRICE = "price"
+SISTEMA_SAC = "sac"
+SISTEMA_ROTATIVO = "rotativo"
+SISTEMA_OUTRO = "outro"
+SISTEMAS_AMORTIZACAO = {SISTEMA_PRICE, SISTEMA_SAC, SISTEMA_ROTATIVO, SISTEMA_OUTRO}
+
+INDEXADOR_PRE = "pre"
+INDEXADOR_CDI = "cdi"
+INDEXADOR_TR = "tr"
+INDEXADOR_IPCA = "ipca"
+INDEXADOR_OUTRO = "outro"
+INDEXADORES_DIVIDA = {
+    INDEXADOR_PRE,
+    INDEXADOR_CDI,
+    INDEXADOR_TR,
+    INDEXADOR_IPCA,
+    INDEXADOR_OUTRO,
+}
+
+
+class Divida(SQLModel, table=True):
+    """Estoque de uma dívida — saldo, juros e parcela, não o fluxo mensal.
+
+    Os lançamentos continuam em `lancamento` (o que saiu no mês). Esta
+    tabela guarda o que ainda resta e a que taxa, para simular
+    avalanche/snowball. Tipos são strings livres (`TIPOS_DIVIDA`); um
+    valor novo não exige migration.
+    """
+
+    __tablename__ = "divida"
+    __table_args__ = _TABLE_ARGS
+
+    id: int | None = Field(default=None, primary_key=True)
+    nome: str = Field(index=True)
+    tipo: str = Field(default=TIPO_DIVIDA_OUTRO, index=True)
+    credor: str = Field(default="")
+    status: str = Field(default=STATUS_DIVIDA_ATIVA, index=True)
+
+    saldo: Decimal = Field(max_digits=14, decimal_places=2)
+    taxa_juros_aa: Decimal = Field(default=Decimal("0"), max_digits=8, decimal_places=4)
+    indexador: str = Field(default=INDEXADOR_PRE)
+    sistema_amortizacao: str = Field(default=SISTEMA_PRICE)
+    parcela_mensal: Decimal = Field(max_digits=12, decimal_places=2)
+
+    parcelas_totais: int | None = Field(default=None)
+    parcelas_pagas: int | None = Field(default=None)
+    dia_vencimento: int | None = Field(default=None)
+    data_contratacao: date | None = Field(default=None)
+    data_fim_prevista: date | None = Field(default=None)
+
+    pessoa_id: int | None = Field(default=None, foreign_key="pessoa.id", index=True)
+    categoria_id: int | None = Field(default=None, foreign_key="categoria.id", index=True)
+    observacao: str | None = Field(default=None)
+
     criado_em: datetime = Field(default_factory=_agora_utc)
     atualizado_em: datetime = Field(default_factory=_agora_utc)

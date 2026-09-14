@@ -27,6 +27,8 @@ PAGINAS = [
     "app/paginas/lancamentos.py",
     "app/paginas/recorrentes.py",
     "app/paginas/orcamento.py",
+    "app/paginas/diagnostico.py",
+    "app/paginas/dividas.py",
     "app/paginas/casal.py",
     "app/paginas/faturas.py",
     "app/paginas/categorias.py",
@@ -784,3 +786,30 @@ def test_ano_padrao_prefere_corrente_se_existir() -> None:
     # Quando o ano corrente não está, devolve o último (mais recente).
     assert ano_padrao([atual - 3, atual - 2]) == atual - 2
     assert ano_padrao([]) is None
+
+
+def test_dividas_prefill_preenche_nome_e_parcela(banco_temporario):
+    """Preencher grava `divida_prefill`; o form precisa nascer com esses valores."""
+    at = AppTest.from_file(str(RAIZ / "app/paginas/dividas.py"), default_timeout=30)
+    at.session_state["divida_prefill"] = {
+        "nome": "Financiamento Casa - Caixa",
+        "tipo": "financiamento_imovel",
+        "credor": "Caixa",
+        "status": "ativa",
+        "saldo": 0.0,
+        "taxa_juros_aa": 0.0,
+        "parcela_mensal": 1518.89,
+        "indexador": "tr",
+        "sistema_amortizacao": "sac",
+        "pessoa": "(casal / não atribuir)",
+        "categoria": "(nenhuma)",
+    }
+    at.run()
+    if at.exception:
+        msgs = [str(e.value) for e in at.exception]
+        raise AssertionError(f"Exceção no prefill: {msgs}")
+    nomes = [w.value for w in at.text_input]
+    assert "Financiamento Casa - Caixa" in nomes
+    assert "Caixa" in nomes
+    parcelas = [float(w.value) for w in at.number_input if w.value is not None]
+    assert any(abs(v - 1518.89) < 0.011 for v in parcelas)

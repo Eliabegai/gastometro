@@ -29,13 +29,17 @@ from db.models import (
     FONTE_EXCEL_LEGADO,
     FONTE_PDF,
     FONTE_PLANILHA,
+    STATUS_DIVIDA_ATIVA,
+    STATUS_DIVIDA_QUITADA,
     TIPO_CATEGORIA_DESPESA,
     TIPO_CONTA_OUTRO,
+    TIPO_DIVIDA_OUTRO,
     TIPO_LANCAMENTO_DESPESA,
     TIPO_LANCAMENTO_ESTORNO,
     TIPO_LANCAMENTO_RECEITA,
     Categoria,
     Conta,
+    Divida,
     EscopoCategoria,
     Fatura,
     Lancamento,
@@ -1220,6 +1224,133 @@ def copiar_orcamentos_de_mes(origem: str, destino: str) -> int:
             )
             copiados += 1
         return copiados
+
+
+def listar_dividas_df(*, incluir_quitadas: bool = False) -> pd.DataFrame:
+    """Dívidas com nomes de pessoa/categoria resolvidos."""
+    with get_session() as session:
+        stmt = (
+            select(Divida, Categoria, Pessoa)
+            .join(Categoria, Divida.categoria_id == Categoria.id, isouter=True)
+            .join(Pessoa, Divida.pessoa_id == Pessoa.id, isouter=True)
+            .order_by(Divida.status, Divida.nome)
+        )
+        if not incluir_quitadas:
+            stmt = stmt.where(Divida.status != STATUS_DIVIDA_QUITADA)
+        rows = session.exec(stmt).all()
+
+        registros: list[dict[str, Any]] = []
+        for div, cat, pessoa in rows:
+            registros.append(
+                {
+                    "id": div.id,
+                    "nome": div.nome,
+                    "tipo": div.tipo,
+                    "credor": div.credor or "",
+                    "status": div.status,
+                    "saldo": float(div.saldo),
+                    "taxa_juros_aa": float(div.taxa_juros_aa),
+                    "indexador": div.indexador,
+                    "sistema_amortizacao": div.sistema_amortizacao,
+                    "parcela_mensal": float(div.parcela_mensal),
+                    "parcelas_totais": div.parcelas_totais,
+                    "parcelas_pagas": div.parcelas_pagas,
+                    "dia_vencimento": div.dia_vencimento,
+                    "data_contratacao": div.data_contratacao,
+                    "data_fim_prevista": div.data_fim_prevista,
+                    "pessoa": pessoa.nome if pessoa else "",
+                    "pessoa_id": div.pessoa_id,
+                    "categoria": cat.nome if cat else "",
+                    "categoria_id": div.categoria_id,
+                    "observacao": div.observacao or "",
+                }
+            )
+    return pd.DataFrame(registros)
+
+
+def salvar_divida(
+    *,
+    nome: str,
+    saldo: float,
+    parcela_mensal: float,
+    tipo: str = TIPO_DIVIDA_OUTRO,
+    credor: str = "",
+    status: str = STATUS_DIVIDA_ATIVA,
+    taxa_juros_aa: float = 0.0,
+    indexador: str = "pre",
+    sistema_amortizacao: str = "price",
+    parcelas_totais: int | None = None,
+    parcelas_pagas: int | None = None,
+    dia_vencimento: int | None = None,
+    data_contratacao: date | None = None,
+    data_fim_prevista: date | None = None,
+    pessoa_id: int | None = None,
+    categoria_id: int | None = None,
+    observacao: str | None = None,
+    divida_id: int | None = None,
+) -> int | None:
+    """Cria ou atualiza uma dívida. Devolve o id."""
+    nome_limpo = (nome or "").strip()
+    if not nome_limpo:
+        return None
+    saldo_dec = Decimal(str(max(saldo, 0))).quantize(Decimal("0.01"))
+    parcela_dec = Decimal(str(max(parcela_mensal, 0))).quantize(Decimal("0.01"))
+    taxa_dec = Decimal(str(max(taxa_juros_aa, 0))).quantize(Decimal("0.0001"))
+    if saldo_dec <= 0:
+        status = STATUS_DIVIDA_QUITADA
+
+    campos = {
+        "nome": nome_limpo,
+        "tipo": tipo or TIPO_DIVIDA_OUTRO,
+        "credor": (credor or "").strip(),
+        "status": status or STATUS_DIVIDA_ATIVA,
+        "saldo": saldo_dec,
+        "taxa_juros_aa": taxa_dec,
+        "indexador": indexador or "pre",
+        "sistema_amortizacao": sistema_amortizacao or "price",
+        "parcela_mensal": parcela_dec,
+        "parcelas_totais": parcelas_totais,
+        "parcelas_pagas": parcelas_pagas,
+        "dia_vencimento": dia_vencimento,
+        "data_contratacao": data_contratacao,
+        "data_fim_prevista": data_fim_prevista,
+        "pessoa_id": pessoa_id,
+        "categoria_id": categoria_id,
+        "observacao": (observacao or "").strip() or None,
+    }
+
+    with get_session() as session:
+        if divida_id is not None:
+            existente = session.get(Divida, divida_id)
+            if existente is not None:
+                for chave, valor in campos.items():
+                    setattr(existente, chave, valor)
+                existente.atualizado_em = _agora_utc()
+                session.add(existente)
+                session.flush()
+                return existente.id
+        nova = Divida(**campos)
+        session.add(nova)
+        session.flush()
+        return nova.id
+
+
+def excluir_divida(divida_id: int) -> None:
+    with get_session() as session:
+        div = session.get(Divida, divida_id)
+        if div is not None:
+            session.delete(div)
+
+
+def marcar_divida_quitada(divida_id: int) -> None:
+    with get_session() as session:
+        div = session.get(Divida, divida_id)
+        if div is None:
+            return
+        div.status = STATUS_DIVIDA_QUITADA
+        div.saldo = Decimal("0.00")
+        div.atualizado_em = _agora_utc()
+        session.add(div)
 
 
 # Mantida para futuras categorias de receita; ainda não usada na Fase 1

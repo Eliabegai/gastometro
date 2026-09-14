@@ -79,6 +79,16 @@ def main() -> None:
             icon=":material/savings:",
         ),
         st.Page(
+            str(PAGINAS / "diagnostico.py"),
+            title="Diagnóstico",
+            icon=":material/monitor_heart:",
+        ),
+        st.Page(
+            str(PAGINAS / "dividas.py"),
+            title="Dívidas",
+            icon=":material/account_balance:",
+        ),
+        st.Page(
             str(PAGINAS / "casal.py"),
             title="Casal",
             icon=":material/favorite:",
