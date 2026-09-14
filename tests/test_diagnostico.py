@@ -113,6 +113,7 @@ def test_taxa_poupanca_info_entre_10_e_20_pct():
         ]
     )
     diag = diagnosticar(df)
+    assert diag.kpis.taxa_poupanca is not None
     assert abs(diag.kpis.taxa_poupanca - 0.15) < 1e-9
     achados = _por_id(diag, "poupanca:info")
     assert len(achados) == 1

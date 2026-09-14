@@ -18,7 +18,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 import pandas as pd
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from categorias import _normalizar as normalizar_descricao  # noqa: PLC2701
 from categorias import categorizar as categorizar_por_regras
@@ -339,17 +339,17 @@ def _lancamento_pdf_semantico_existe(
         Lancamento.conta_id == conta_id,
         Lancamento.data == data_tx,
         Lancamento.valor == valor_abs,
-        Lancamento.fonte.in_(FONTES_DETALHE_PDF),
+        col(Lancamento.fonte).in_(FONTES_DETALHE_PDF),
     )
     if parcela_atual is not None:
         stmt = stmt.where(Lancamento.parcela_atual == parcela_atual)
     else:
-        stmt = stmt.where(Lancamento.parcela_atual.is_(None))
+        stmt = stmt.where(col(Lancamento.parcela_atual).is_(None))
 
-    for lanc in session.exec(stmt).all():
-        if normalizar_descricao(lanc.descricao) == norm:
-            return True
-    return False
+    return any(
+        normalizar_descricao(lanc.descricao) == norm
+        for lanc in session.exec(stmt).all()
+    )
 
 
 def _score_fatura_para_manter(fatura: Fatura) -> tuple[int, int]:

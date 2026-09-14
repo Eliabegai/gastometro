@@ -13,6 +13,7 @@ Estes testes pegam:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,18 @@ streamlit_testing = pytest.importorskip("streamlit.testing.v1")
 AppTest = streamlit_testing.AppTest
 
 RAIZ = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def _limpar_cache_streamlit() -> Iterator[None]:
+    """Evita DataFrame cacheado de um teste vazar pro próximo."""
+    import streamlit as st
+
+    st.cache_data.clear()
+    yield
+    st.cache_data.clear()
+
+
 PAGINAS = [
     "app/streamlit_app.py",
     "app/paginas/dashboard.py",
@@ -293,7 +306,7 @@ def test_importar_pdf_idempotente(banco_temporario) -> None:
     assert r2[0]["novos"] == 0
 
 
-def test_clique_em_barra_ativa_modo_mensal() -> None:
+def test_clique_em_barra_ativa_modo_mensal(banco_temporario) -> None:
     """Quando o usuário clica numa barra do gráfico, o handler
     `_aplicar_clique_barra` deve preparar o `st.session_state` pra que o
     próximo run renderize o modo Mensal com o mês clicado já selecionado.
@@ -301,6 +314,8 @@ def test_clique_em_barra_ativa_modo_mensal() -> None:
     import pandas as pd
     import streamlit as st
 
+    # Importar a página dispara `render()` no nível do módulo; o fixture
+    # `banco_temporario` garante schema (categoria/escopo) nesse momento.
     from app.paginas import dashboard as dash
 
     df = pd.DataFrame(
@@ -414,7 +429,7 @@ def test_clique_em_barra_atualiza_label_do_widget(banco_temporario) -> None:
     )
 
 
-def test_sem_clique_nao_muda_session_state() -> None:
+def test_sem_clique_nao_muda_session_state(banco_temporario) -> None:
     """Sem evento de seleção (ou seleção vazia), o handler vira no-op."""
     import pandas as pd
     import streamlit as st
