@@ -12,6 +12,7 @@ from typing import Literal
 
 import pandas as pd
 
+from analytics.fluxo import resumir_fluxo
 from analytics.recorrentes import chave_merchant, detectar_recorrentes
 
 PAPEL_AUDITORIA = "auditoria"
@@ -147,6 +148,8 @@ class KpisFluxo:
     saldo: float
     taxa_poupanca: float | None
     meses: int
+    # Empréstimos recebidos no recorte: ficam fora da renda (viram dívida).
+    entradas_credito: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -192,16 +195,14 @@ def meses_com_despesa(df: pd.DataFrame) -> int:
 
 
 def kpis_fluxo(df: pd.DataFrame) -> KpisFluxo:
-    receitas = _soma_tipo(df, "receita")
-    despesas = _soma_tipo(df, "despesa")
-    saldo = receitas - despesas
-    taxa = (saldo / receitas) if receitas > 0 else None
+    fluxo = resumir_fluxo(df)
     return KpisFluxo(
-        receitas=receitas,
-        despesas=despesas,
-        saldo=saldo,
-        taxa_poupanca=taxa,
+        receitas=fluxo.renda,
+        despesas=fluxo.despesas,
+        saldo=fluxo.saldo,
+        taxa_poupanca=fluxo.taxa_poupanca,
         meses=_meses_no_recorte(df),
+        entradas_credito=fluxo.entradas_credito,
     )
 
 
@@ -241,15 +242,13 @@ def diagnosticar(
 
 
 def _soma_tipo(df: pd.DataFrame, tipo: str) -> float:
-    if df is None or df.empty or "tipo" not in df.columns:
-        return 0.0
+    """Renda (sem empréstimos) ou despesa líquida (estornos abatidos)."""
+    fluxo = resumir_fluxo(df)
     if tipo == "receita":
-        sub = df[df["tipo"].isin(["receita", "estorno"])]
-    else:
-        sub = df[df["tipo"] == tipo]
-    if sub.empty:
-        return 0.0
-    return float(sub["valor"].abs().sum())
+        return fluxo.renda
+    if tipo == "despesa":
+        return fluxo.despesas
+    return 0.0
 
 
 def _despesas(df: pd.DataFrame) -> pd.DataFrame:

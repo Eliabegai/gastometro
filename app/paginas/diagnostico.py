@@ -20,6 +20,7 @@ from analytics.diagnostico import (
     plano_simples,
     vazamento_anualizavel,
 )
+from analytics.fluxo import meses_previstos, separar_realizado_previsto
 from analytics.orcamento import calcular_progressos
 from app.estado import hidratar_globais, persistir_globais
 from app.helpers import (
@@ -271,6 +272,17 @@ def render() -> None:
     df = filtrar_por_ano(df, ano)
     if pessoa != OPCAO_TODAS_PESSOAS:
         df = df[df["pessoa"] == pessoa]
+
+    # Meses previstos (planilha, sem fatura) distorcem médias, inflação e
+    # o "último mês" dos tetos — a auditoria olha só o que já aconteceu.
+    previstos = meses_previstos(df)
+    if previstos:
+        df, _ = separar_realizado_previsto(df)
+        st.caption(
+            "Meses previstos ficam de fora da auditoria: "
+            + ", ".join(ref_para_nome_br(m) for m in previstos)
+            + "."
+        )
 
     if df.empty:
         rotulo = f"em **{ano}**" if ano is not None else "no recorte"

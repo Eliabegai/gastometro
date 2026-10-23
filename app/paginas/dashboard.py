@@ -34,6 +34,12 @@ from analytics.escopo import (
     resumo_escopo_despesas,
     resumo_por_pessoa,
 )
+from analytics.fluxo import (
+    mes_corrente_iso,
+    meses_previstos,
+    resumir_fluxo,
+    separar_realizado_previsto,
+)
 from analytics.orcamento import calcular_progressos, listar_alertas, resumo_alertas
 from app.estado import (
     CHAVE_ANO,
@@ -67,6 +73,9 @@ TOP_CATEGORIAS_GRAFICO = 10
 # pelo Streamlit quando `on_select="rerun"` está ativo.
 KEY_BAR_CHART_EVT = "dashboard_bar_chart_evt"
 
+# Toggle (visão anual) para incluir meses previstos nos KPIs do ano.
+CHAVE_INCLUIR_PREVISTOS = "dashboard_incluir_previstos"
+
 
 def _kpi_card(
     coluna,
@@ -83,21 +92,35 @@ def _kpi_card(
 
 
 def _soma_por_tipo(df: pd.DataFrame, tipo: str) -> float:
-    """Soma absoluta do tipo (`despesa`, `receita`, `estorno`).
+    """Total do tipo, pelas regras de `analytics.fluxo`.
 
-    Para `receita` inclui estornos (também são entradas reais — crédito
-    devolvido pelo banco). Para `despesa` exclui estornos. Tudo em
-    módulo (estornos vêm com sinal negativo do banco).
+    - `despesa`: despesas líquidas (compras − estornos).
+    - `receita`: renda (empréstimos recebidos ficam de fora).
+    - `estorno`: total estornado (positivo).
     """
-    if df.empty:
-        return 0.0
+    fluxo = resumir_fluxo(df)
     if tipo == "receita":
-        sub = df[df["tipo"].isin(["receita", "estorno"])]
-    else:
-        sub = df[df["tipo"] == tipo]
-    if sub.empty:
-        return 0.0
-    return float(sub["valor"].abs().sum())
+        return fluxo.renda
+    if tipo == "estorno":
+        return fluxo.estornos
+    return fluxo.despesas
+
+
+def _nota_fluxo(df: pd.DataFrame) -> None:
+    """Legenda explicando estornos abatidos e empréstimos fora da renda."""
+    fluxo = resumir_fluxo(df)
+    partes: list[str] = []
+    if fluxo.estornos > 0:
+        partes.append(
+            f"Estornos de {formatar_brl_md(fluxo.estornos)} já abatidos das despesas."
+        )
+    if fluxo.entradas_credito > 0:
+        partes.append(
+            f"Empréstimos recebidos ({formatar_brl_md(fluxo.entradas_credito)}) "
+            "não contam como receita."
+        )
+    if partes:
+        st.caption(" ".join(partes))
 
 
 def _formatar_delta(atual: float, anterior: float, label_anterior: str) -> str | None:
@@ -150,20 +173,32 @@ def _grafico_barras_mensal(
     if df.empty:
         return
 
-    sub = df[df["tipo"].isin(["despesa", "receita", "estorno"])].copy()
+    sub = df[df["tipo"].isin(["despesa", "receita", "estorno"])]
     if sub.empty:
         return
 
-    sub["valor_abs"] = sub["valor"].abs()
-    sub["categoria_fluxo"] = sub["tipo"].replace({"estorno": "Receita"}).replace(
-        {"despesa": "Despesa", "receita": "Receita"}
-    )
-    agg = (
-        sub.groupby(["referencia_mes", "categoria_fluxo"])["valor_abs"]
-        .sum()
-        .reset_index()
-    )
-    agg["referencia_mes"] = agg["referencia_mes"].astype(str)
+    previstos = set(meses_previstos(sub))
+    linhas: list[dict[str, object]] = []
+    for ref, grupo in sub.groupby("referencia_mes"):
+        ref_s = str(ref)
+        fluxo = resumir_fluxo(grupo)
+        situacao = "Previsto" if ref_s in previstos else "Realizado"
+        for rotulo, valor in (("Despesa", fluxo.despesas), ("Receita", fluxo.renda)):
+            linhas.append(
+                {
+                    "referencia_mes": ref_s,
+                    "categoria_fluxo": rotulo,
+                    "valor_abs": valor,
+                    "situacao": situacao,
+                }
+            )
+    agg = pd.DataFrame(linhas)
+    extras: dict[str, object] = {}
+    if previstos:
+        extras = {
+            "pattern_shape": "situacao",
+            "pattern_shape_map": {"Realizado": "", "Previsto": "/"},
+        }
     agg = agg.sort_values(
         "referencia_mes", key=lambda s: s.map(chave_ord_ref_iso)
     )
@@ -189,9 +224,14 @@ def _grafico_barras_mensal(
             "mes_label": "Mês",
             "valor_abs": "Total (R$)",
             "categoria_fluxo": "Fluxo",
+            "situacao": "Situação",
         },
         color_discrete_map={"Despesa": "#EF553B", "Receita": "#00CC96"},
+        **extras,
     )
+    for trace in fig.data:
+        # Mantém Realizado/Previsto lado a lado dentro do mesmo fluxo.
+        trace.offsetgroup = str(trace.name).split(",")[0].strip()
     if label_destaque:
         # Plotly aceita marker.opacity como lista (1 valor por barra
         # dentro do trace). Cada trace é um fluxo (Despesa/Receita).
@@ -623,6 +663,7 @@ def _kpis_anuais(
         "Lançamentos no período",
         f"{len(df_recorte):,}".replace(",", "."),
     )
+    _nota_fluxo(df_recorte)
 
 
 def _kpis_mensais(
@@ -668,6 +709,11 @@ def _kpis_mensais(
         f"Lançamentos em {label_mes}",
         f"{qtd:,}".replace(",", "."),
     )
+    _nota_fluxo(df_recorte[df_recorte["referencia_mes"] == ref])
+    if ref > mes_corrente_iso():
+        st.info(
+            f"{label_mes} é um mês **previsto** (vem da planilha, ainda sem fatura)."
+        )
 
 
 def render() -> None:
@@ -715,17 +761,32 @@ def render() -> None:
             key=CHAVE_MODO,
         )
 
+    previstos = meses_previstos(df_recorte)
+    incluir_previstos = False
     ref_selecionada: str | None = None
     if modo == MODO_MENSAL:
         with col_mes:
             ref_selecionada = selecionar_mes(df_recorte)
+    elif previstos:
+        with col_mes:
+            incluir_previstos = st.toggle(
+                "Incluir meses previstos",
+                value=False,
+                key=CHAVE_INCLUIR_PREVISTOS,
+                help="Meses futuros vêm da planilha, sem fatura. "
+                "Por padrão ficam fora dos KPIs do ano.",
+            )
+
+    df_realizado, _ = separar_realizado_previsto(df_recorte)
+    usar_todos = modo == MODO_MENSAL or incluir_previstos or df_realizado.empty
+    df_kpi = df_recorte if usar_todos else df_realizado
 
     with col_limpar:
         # Alinhamento vertical: spacer fake pra empurrar o botão pra
         # base da linha (selectboxes têm label em cima).
         st.markdown("&nbsp;", unsafe_allow_html=True)
         if botao_limpar_filtros(
-            CHAVES_GLOBAIS + (f"{CHAVE_MES}__widget",),
+            CHAVES_GLOBAIS + (f"{CHAVE_MES}__widget", CHAVE_INCLUIR_PREVISTOS),
             MAPA_GLOBAIS.values(),
             key="btn_limpar_dashboard",
             rotulo_auxiliar="Volta ao ano corrente, visão anual",
@@ -740,7 +801,13 @@ def render() -> None:
     if modo == MODO_MENSAL and ref_selecionada:
         _kpis_mensais(df_recorte, ref_selecionada)
     else:
-        _kpis_anuais(df_recorte, rotulo_ano)
+        _kpis_anuais(df_kpi, rotulo_ano)
+        if previstos and not usar_todos:
+            st.caption(
+                "Realizado até o mês corrente. Previsto (fora dos KPIs): "
+                + ", ".join(ref_para_nome_br(m) for m in previstos)
+                + "."
+            )
 
     st.divider()
 
@@ -750,7 +817,7 @@ def render() -> None:
         df_fluxo = df_recorte[df_recorte["referencia_mes"] == ref_selecionada]
         titulo_periodo = ref_para_nome_br(ref_selecionada) or "—"
     else:
-        df_fluxo = df_recorte
+        df_fluxo = df_kpi
         titulo_periodo = rotulo_ano.replace("no ano ", "").replace(
             "(todo o histórico)", "todo o histórico"
         )
@@ -776,7 +843,7 @@ def render() -> None:
         df_painel = df_recorte[df_recorte["referencia_mes"] == ref_selecionada]
         _painel_escopo_e_orcamento(df_painel, ref_selecionada)
     else:
-        _painel_escopo_e_orcamento(df_recorte, None)
+        _painel_escopo_e_orcamento(df_kpi, None)
 
     # Persiste filtros globais na URL (idempotente). Roda no fim do
     # render pra capturar o último valor dos widgets.

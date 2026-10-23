@@ -14,6 +14,12 @@ from __future__ import annotations
 
 import streamlit as st
 
+from analytics.cobertura import (
+    STATUS_DIFERENCA,
+    STATUS_OK,
+    STATUS_SEM_FATURA,
+    matriz_cobertura,
+)
 from app.estado import (
     CHAVES_GLOBAIS,
     MAPA_GLOBAIS,
@@ -214,6 +220,56 @@ def _banner_periodo_global() -> None:
             st.rerun()
 
 
+_ROTULO_STATUS = {
+    STATUS_OK: "ok",
+    STATUS_DIFERENCA: "diferença",
+    STATUS_SEM_FATURA: "sem fatura",
+}
+
+
+def _cobertura(df_fat, df_lanc) -> None:
+    """Matriz cartão × mês: onde falta fatura ou os lançamentos não fecham."""
+    cob = matriz_cobertura(df_fat, df_lanc)
+    if cob.empty:
+        return
+    problemas = cob[cob["status"] != STATUS_OK]
+    with st.expander(
+        f"Cobertura das faturas ({len(problemas)} pendência(s))",
+        expanded=not problemas.empty,
+    ):
+        st.caption(
+            "Compara, por cartão e mês, o total declarado no PDF com a soma "
+            "dos lançamentos importados. **Sem fatura** = mês sem PDF; "
+            "**diferença** = o parser não fechou com o total."
+        )
+        if problemas.empty:
+            st.success("Todas as faturas importadas fecham com o total declarado.")
+            return
+        tabela = problemas.copy()
+        tabela["referencia_mes"] = tabela["referencia_mes"].map(ref_para_nome_br)
+        tabela["status"] = tabela["status"].map(_ROTULO_STATUS)
+        tabela = tabela.rename(
+            columns={
+                "conta": "Cartão",
+                "referencia_mes": "Referência",
+                "status": "Situação",
+                "declarado": "Declarado (R$)",
+                "lancado": "Lançado (R$)",
+                "diferenca": "Diferença (R$)",
+            }
+        )
+        st.dataframe(
+            tabela,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Declarado (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Lançado (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Diferença (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
+            },
+        )
+
+
 def render() -> None:
     st.title("Faturas")
 
@@ -256,6 +312,8 @@ def render() -> None:
     st.divider()
 
     df_lanc = carregar_lancamentos()
+    _cobertura(df_fat, df_lanc)
+    st.divider()
     _drill_down(df_fat_periodo, df_lanc)
 
     persistir_globais()

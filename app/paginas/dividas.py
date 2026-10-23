@@ -28,6 +28,7 @@ from analytics.dividas import (
     rotulo_tipo_divida,
     sugerir_a_partir_de_recorrentes,
 )
+from analytics.fluxo import renda_media_mensal
 from app.helpers import (
     carregar_lancamentos,
     formatar_brl,
@@ -550,15 +551,9 @@ def _sugestoes(lancamentos: pd.DataFrame, dividas: pd.DataFrame) -> None:
 
 
 def _renda_media_mensal(lancamentos: pd.DataFrame | None) -> float:
-    if lancamentos is None or lancamentos.empty:
-        return 0.0
-    rec = lancamentos[lancamentos["tipo"].isin(["receita", "estorno"])]
-    if rec.empty or "referencia_mes" not in rec.columns:
-        return 0.0
-    meses = rec["referencia_mes"].nunique()
-    if meses <= 0:
-        return 0.0
-    return float(rec["valor"].abs().sum()) / meses
+    """Renda média dos meses já realizados — sem estornos, empréstimos
+    recebidos nem meses previstos (que inflavam a capacidade de pagar)."""
+    return renda_media_mensal(lancamentos)
 
 
 def _aba_destruidor(df: pd.DataFrame, lancamentos: pd.DataFrame | None) -> None:
