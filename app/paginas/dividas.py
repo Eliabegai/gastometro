@@ -226,7 +226,7 @@ def _tabela_cadastro(df: pd.DataFrame) -> None:
             ]
         ],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Saldo (R$)": _COLUNA_BRL,
             "Parcela (R$)": _COLUNA_BRL,
@@ -662,7 +662,7 @@ def _aba_destruidor(df: pd.DataFrame, lancamentos: pd.DataFrame | None) -> None:
                 title="Quando cada dívida some",
             )
             fig.update_layout(height=320)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
             crono_tab = crono.rename(
                 columns={
                     "mês": "Mês",
@@ -674,7 +674,7 @@ def _aba_destruidor(df: pd.DataFrame, lancamentos: pd.DataFrame | None) -> None:
             st.dataframe(
                 crono_tab,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 column_config={"Juros até então (R$)": _COLUNA_BRL},
             )
 
@@ -691,7 +691,7 @@ def _aba_destruidor(df: pd.DataFrame, lancamentos: pd.DataFrame | None) -> None:
     st.dataframe(
         tabela[["Extra (R$)", "Prazo", "Juros totais (R$)"]],
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Extra (R$)": _COLUNA_BRL,
             "Juros totais (R$)": _COLUNA_BRL,

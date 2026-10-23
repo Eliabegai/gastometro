@@ -117,7 +117,7 @@ def _card_achado(achado: Achado) -> None:
                 st.dataframe(
                     visivel,
                     hide_index=True,
-                    use_container_width=True,
+                    width="stretch",
                     column_config={
                         "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
                     },
@@ -210,7 +210,7 @@ def _aba_vazamentos(diag) -> None:
             height=max(280, 28 * len(top)),
             showlegend=False,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     tabela = pd.DataFrame(
         [
@@ -228,7 +228,7 @@ def _aba_vazamentos(diag) -> None:
     st.dataframe(
         tabela,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         height=min(480, 80 + 35 * len(tabela)),
         column_config={
             "Custo anual (R$)": st.column_config.NumberColumn(format="R$ %.2f"),

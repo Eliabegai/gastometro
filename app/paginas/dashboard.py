@@ -246,7 +246,7 @@ def _grafico_barras_mensal(
     # essa chave **antes** dos controles do topo pra ajustar modo/mês.
     st.plotly_chart(
         fig,
-        use_container_width=True,
+        width="stretch",
         on_select="rerun",
         selection_mode="points",
         key=KEY_BAR_CHART_EVT,
@@ -344,7 +344,7 @@ def _grafico_pizza_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAF
         hole=0.35,
     )
     fig.update_traces(textposition="inside", textinfo="percent+label")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 # Grupos de despesa que o usuário acompanha com KPIs dedicados no
@@ -476,7 +476,7 @@ def _grafico_casal_pessoal(resumo: dict[str, float], por_pessoa: pd.DataFrame) -
         )
         fig.update_traces(textposition="inside", textinfo="percent+label")
         fig.update_layout(showlegend=False, margin=dict(t=40, b=20, l=20, r=20))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with col_barras:
         if por_pessoa.empty:
@@ -502,7 +502,7 @@ def _grafico_casal_pessoal(resumo: dict[str, float], por_pessoa: pd.DataFrame) -
                 height=max(160, 56 * len(por_pessoa)),
             )
             fig.update_xaxes(visible=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 
 def _painel_escopo_e_orcamento(
@@ -628,7 +628,7 @@ def _top_categorias_periodo(
     st.subheader(f"Top {top_n} categorias por despesa — {titulo_periodo}")
     st.dataframe(
         agg,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Total (R$)": st.column_config.NumberColumn(format="R$ %.2f"),

@@ -157,7 +157,7 @@ def _tabela(df, *, mostrar_tecnicas: bool = False) -> None:
 
     st.dataframe(
         visivel,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=560,
         column_config={

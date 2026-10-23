@@ -130,7 +130,7 @@ def _resumo_categorias(df, rotulo_periodo: str) -> None:
     st.subheader(f"Categorias por gasto {rotulo_periodo}")
     st.dataframe(
         agg,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Total (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
@@ -190,7 +190,7 @@ def _top_outros_gastos(
             ),
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         key="editor_outros",
     )
 
@@ -236,7 +236,7 @@ def _overrides_existentes() -> None:
             for d, c in sorted(overrides.items())
         ]
     )
-    st.dataframe(df, use_container_width=True, hide_index=True, height=300)
+    st.dataframe(df, width="stretch", hide_index=True, height=300)
 
 
 def _adicionar_manual() -> None:

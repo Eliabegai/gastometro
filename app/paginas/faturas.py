@@ -71,7 +71,7 @@ def _tabela_faturas(df) -> None:
 
     st.dataframe(
         visivel,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Valor total (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
@@ -105,7 +105,7 @@ def _resumo_por_cartao(df) -> None:
             "transacoes": "Qtde. Transações",
         }
     )
-    st.dataframe(agg, use_container_width=True, hide_index=True)
+    st.dataframe(agg, width="stretch", hide_index=True)
 
 
 def _drill_down(df_faturas, df_lanc) -> None:
@@ -163,7 +163,7 @@ def _drill_down(df_faturas, df_lanc) -> None:
     )
     st.dataframe(
         sub_v,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=400,
         column_config={
@@ -261,7 +261,7 @@ def _cobertura(df_fat, df_lanc) -> None:
         st.dataframe(
             tabela,
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "Declarado (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
                 "Lançado (R$)": st.column_config.NumberColumn(format="R$ %.2f"),

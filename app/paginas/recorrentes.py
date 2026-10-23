@@ -108,7 +108,7 @@ def _grafico_top(padroes: pd.DataFrame) -> None:
         title="Maiores recorrentes do recorte",
     )
     fig.update_layout(yaxis={"categoryorder": "total ascending"}, height=420, showlegend=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _tabela_padroes(padroes: pd.DataFrame) -> None:
@@ -146,7 +146,7 @@ def _tabela_padroes(padroes: pd.DataFrame) -> None:
                 "Variação de preço (%)",
             ]
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         height=420,
         column_config={
@@ -193,7 +193,7 @@ def _detalhe_padrao(df: pd.DataFrame, padroes: pd.DataFrame) -> None:
             visivel["referencia_mes"] = visivel["referencia_mes"].map(ref_para_nome_br)
         st.dataframe(
             visivel,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
                 "valor": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
@@ -215,7 +215,7 @@ def _detalhe_padrao(df: pd.DataFrame, padroes: pd.DataFrame) -> None:
         color_discrete_sequence=[_CORES_TIPO.get(linha["tipo_recorrente"], "#6B7280")],
     )
     fig.update_layout(height=320)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render() -> None:
