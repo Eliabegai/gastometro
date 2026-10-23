@@ -863,6 +863,25 @@
 
 ---
 
+## Revisão de leitura de gastos (branch `melhorias/leitura-gastos-e-telas`)
+
+- [x] `analytics/fluxo.py`: fonte única de despesa líquida (estorno abate), renda
+  (empréstimo recebido fora), saldo e previsto × realizado. Usado por Dashboard,
+  Lançamentos, Diagnóstico e Dívidas.
+- [x] Meses previstos (planilha sem fatura) separados nos KPIs, no gráfico (barras
+  hachuradas) e na auditoria; seletor de mês abre no mês corrente.
+- [x] Projeção do mês = parte fixa (planilha + parcelas) + ritmo da parte variável.
+- [x] Recorrentes: `eh_fixo` (📌 compromisso fixo × 🔁 hábito) em `marcar_recorrentes`.
+- [x] Lançamentos: sem "Soma", com despesas líquidas / renda / saldo; colunas técnicas
+  atrás de um toggle; filtro "Ocultar meses previstos".
+- [x] Faturas: matriz de cobertura cartão × mês (sem fatura / diferença vs total declarado).
+- [x] Menu agrupado (Visão geral, Planejar, Dados, Configuração).
+- [ ] Alternar base do mês entre fatura × data da compra.
+- [ ] Agrupar "Outros Gastos" por comerciante (`chave_merchant`) em Categorias/extrator.
+- [ ] Migrar `use_container_width` para `width="stretch"` (ainda aceito no Streamlit 1.65).
+
+---
+
 ## Notas para evoluir este arquivo
 
 - Ao iniciar uma melhoria: marcar `[~]` e adicionar `(em andamento)`.

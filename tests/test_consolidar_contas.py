@@ -9,6 +9,7 @@ Cobre os 3 caminhos do `consolidar()`:
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from sqlmodel import select
 
@@ -36,7 +37,7 @@ def _criar_lanc(
     assert conta_id is not None, "conta_id é obrigatório no teste"
     lanc = Lancamento(
         descricao=f"teste {hash_id}",
-        valor=valor,
+        valor=Decimal(str(valor)),
         tipo=TIPO_LANCAMENTO_DESPESA,
         data=date(2026, 1, 1),
         referencia_mes="2026-01",
@@ -194,7 +195,7 @@ def test_consolidar_pessoas_funde_ambas(banco_temporario) -> None:
         # com novo titular).
         lanc = Lancamento(
             descricao="compra A",
-            valor=10.0,
+            valor=Decimal("10.0"),
             tipo=TIPO_LANCAMENTO_DESPESA,
             data=date(2026, 1, 1),
             referencia_mes="2026-01",
@@ -371,7 +372,7 @@ def test_remover_pessoas_orfas_preserva_com_lancamento(
         conta_aux = _criar_conta(s, "Conta Aux")
         lanc = Lancamento(
             descricao="manual avulso",
-            valor=1.0,
+            valor=Decimal("1.0"),
             tipo=TIPO_LANCAMENTO_DESPESA,
             data=date(2026, 1, 1),
             referencia_mes="2026-01",
