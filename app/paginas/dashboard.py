@@ -26,6 +26,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from analytics.alertas import NIVEL_ERRO, montar_alertas
+from analytics.cobertura import matriz_cobertura
 from analytics.escopo import (
     marcar_escopo as _marcar_escopo,
 )
@@ -53,6 +55,7 @@ from app.estado import (
     persistir_globais,
 )
 from app.helpers import (
+    carregar_faturas,
     carregar_lancamentos,
     chave_ord_ref_iso,
     filtrar_por_ano,
@@ -65,6 +68,14 @@ from app.helpers import (
 from app.preferencias import salvar_teto_cartao, teto_cartao
 from app.ui_orcamento import render_barra_limite
 from db.repository import listar_escopos_categoria_dict, listar_orcamentos_df
+
+# Paleta com significado, usada em todo o Dashboard: vermelho = saiu,
+# verde = entrou, âmbar = atenção, azul = saldo, cinza-azulado = neutro.
+COR_DESPESA = "#EF553B"
+COR_RECEITA = "#00CC96"
+COR_ATENCAO = "#F59E0B"
+COR_SALDO = "#2563EB"
+COR_NEUTRA = "#64748B"
 
 MODO_ANUAL = "Ano inteiro"
 MODO_MENSAL = "Mensal"
@@ -228,7 +239,7 @@ def _grafico_barras_mensal(
             "categoria_fluxo": "Fluxo",
             "situacao": "Situação",
         },
-        color_discrete_map={"Despesa": "#EF553B", "Receita": "#00CC96"},
+        color_discrete_map={"Despesa": COR_DESPESA, "Receita": COR_RECEITA},
         **extras,
     )
     for trace in fig.data:
@@ -261,7 +272,7 @@ def _grafico_barras_mensal(
         y=(pivot["Receita"] - pivot["Despesa"]).tolist(),
         mode="lines+markers",
         name="Saldo",
-        line={"color": "#2563EB", "width": 2},
+        line={"color": COR_SALDO, "width": 2},
         hovertemplate="Saldo: R$ %{y:,.0f}<extra></extra>",
     )
     fig.add_hline(y=0, line_width=1, line_dash="dot", line_color="#888888")
@@ -276,6 +287,34 @@ def _grafico_barras_mensal(
         selection_mode="points",
         key=KEY_BAR_CHART_EVT,
     )
+
+
+def _alertas_topo(df: pd.DataFrame) -> None:
+    """Resumo curto do que pede ação agora (vermelho, teto, metas, faturas)."""
+    painel = painel_mes(df)
+    progressos = None
+    if painel is not None:
+        metas = listar_orcamentos_df(painel.referencia_mes)
+        if not metas.empty:
+            df_mes = df[df["referencia_mes"] == painel.referencia_mes]
+            overrides = listar_escopos_categoria_dict()
+            progressos = calcular_progressos(
+                _marcar_escopo(df_mes, overrides_categoria=overrides),
+                metas,
+                overrides_categoria=overrides,
+            )
+    cobertura = matriz_cobertura(carregar_faturas(), df)
+    alertas = montar_alertas(
+        painel=painel,
+        progressos=progressos,
+        cobertura=cobertura,
+        teto_cartao=teto_cartao(),
+    )
+    for alerta in alertas:
+        if alerta.nivel == NIVEL_ERRO:
+            st.error(alerta.texto)
+        else:
+            st.warning(alerta.texto)
 
 
 def _painel_este_mes(df: pd.DataFrame) -> None:
@@ -315,12 +354,6 @@ def _painel_este_mes(df: pd.DataFrame) -> None:
     )
     c5.metric("Dias restantes", str(painel.dias_restantes))
 
-    if painel.disponivel < 0:
-        st.error(
-            f"Este mês já está {formatar_brl_md(abs(painel.disponivel))} no vermelho. "
-            "Congele compras novas e revise o variável."
-        )
-
     teto = teto_cartao()
     if teto:
         uso = painel.cartao / teto
@@ -331,10 +364,6 @@ def _painel_este_mes(df: pd.DataFrame) -> None:
                 f"({uso * 100:.0f}% do teto)"
             ),
         )
-        if uso > 1:
-            st.warning(
-                f"Teto do cartão estourado em {formatar_brl_md(painel.cartao - teto)}."
-            )
     else:
         st.caption(
             f"Cartão neste mês: {formatar_brl_md(painel.cartao)}. "
@@ -369,7 +398,7 @@ def _grafico_cartao_teto(df: pd.DataFrame) -> None:
         y="valor",
         title="Gasto no cartão por mês",
         labels={"mes_label": "Mês", "valor": "Cartão (R$)"},
-        color_discrete_sequence=["#F59E0B"],
+        color_discrete_sequence=[COR_ATENCAO],
     )
     teto = teto_cartao()
     if teto:
@@ -445,11 +474,12 @@ def _aplicar_clique_barra(df: pd.DataFrame) -> None:
     st.session_state[f"{CHAVE_MES}__widget"] = str(label)
 
 
-def _grafico_pizza_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAFICO) -> None:
-    """Pizza: top N categorias de **despesa** + 'Outras'.
+def _grafico_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAFICO) -> None:
+    """Barras horizontais: top N categorias de **despesa** + 'Outras'.
 
-    Receitas ficam fora — categorizar "Salário" e "Dízimo" no mesmo
-    gráfico não tem leitura útil.
+    Mais legível que pizza com 10 fatias. "Outros Gastos" aparece em âmbar:
+    é a categoria que ainda não foi explicada e merece atenção.
+    Receitas ficam fora — "Salário" e "Dízimo" no mesmo gráfico não leem bem.
     """
     if df.empty:
         return
@@ -468,13 +498,36 @@ def _grafico_pizza_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAF
     else:
         agg = soma_cat
 
-    fig = px.pie(
-        names=agg.index,
-        values=agg.values,
-        title=f"Despesas por categoria (top {top_n})",
-        hole=0.35,
+    total = float(agg.sum())
+    dados = pd.DataFrame(
+        {
+            "categoria": agg.index,
+            "valor": agg.values,
+            "rotulo": [
+                f"{formatar_brl(float(v))} · {v / total * 100:.0f}%" for v in agg.values
+            ],
+        }
     )
-    fig.update_traces(textposition="inside", textinfo="percent+label")
+    cores = [
+        COR_ATENCAO if cat == "Outros Gastos" else COR_NEUTRA for cat in dados["categoria"]
+    ]
+    fig = px.bar(
+        dados,
+        x="valor",
+        y="categoria",
+        orientation="h",
+        text="rotulo",
+        title=f"Despesas por categoria (top {top_n})",
+        labels={"valor": "Total (R$)", "categoria": ""},
+    )
+    fig.update_traces(marker_color=cores, textposition="outside", cliponaxis=False)
+    fig.update_layout(
+        yaxis={"categoryorder": "total ascending"},
+        xaxis_tickprefix="R$ ",
+        xaxis_tickformat=",.0f",
+        height=max(320, 34 * len(dados) + 80),
+        margin={"r": 90},
+    )
     st.plotly_chart(fig, width="stretch")
 
 
@@ -623,7 +676,7 @@ def _grafico_casal_pessoal(resumo: dict[str, float], por_pessoa: pd.DataFrame) -
                 y="pessoa",
                 orientation="h",
                 text=por_pessoa["total"].map(lambda v: formatar_brl(float(v))),
-                color_discrete_sequence=["#F59E0B"],
+                color_discrete_sequence=[COR_ATENCAO],
             )
             fig.update_traces(textposition="inside", insidetextanchor="end")
             fig.update_layout(
@@ -872,6 +925,7 @@ def render() -> None:
     # atual já vem com modo=Mensal e mês selecionado.
     _aplicar_clique_barra(df)
 
+    _alertas_topo(df)
     _painel_este_mes(df)
 
     col_ano, col_modo, col_mes, col_limpar = st.columns([1, 1, 1, 0.7])
@@ -965,7 +1019,7 @@ def render() -> None:
         # destaque visual no mês selecionado quando aplicável.
         _grafico_barras_mensal(df_recorte, ref_destaque=ref_selecionada)
     with col_b:
-        _grafico_pizza_categorias(df_fluxo)
+        _grafico_categorias(df_fluxo)
 
     _grafico_cartao_teto(df_kpi)
 
