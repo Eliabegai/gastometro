@@ -40,6 +40,7 @@ from analytics.fluxo import (
     resumir_fluxo,
     separar_realizado_previsto,
 )
+from analytics.mes_atual import cartao_por_mes, painel_mes
 from analytics.orcamento import calcular_progressos, listar_alertas, resumo_alertas
 from app.estado import (
     CHAVE_ANO,
@@ -61,6 +62,7 @@ from app.helpers import (
     selecionar_ano,
     selecionar_mes,
 )
+from app.preferencias import salvar_teto_cartao, teto_cartao
 from app.ui_orcamento import render_barra_limite
 from db.repository import listar_escopos_categoria_dict, listar_orcamentos_df
 
@@ -208,9 +210,9 @@ def _grafico_barras_mensal(
         ref_para_nome_br(ref_destaque) if ref_destaque else None
     )
     titulo = (
-        f"Despesas × Receitas por mês — destaque em {label_destaque}"
+        f"Despesas × Receitas e saldo por mês — destaque em {label_destaque}"
         if label_destaque
-        else "Despesas × Receitas por mês"
+        else "Despesas × Receitas e saldo por mês"
     )
 
     fig = px.bar(
@@ -240,6 +242,29 @@ def _grafico_barras_mensal(
                 1.0 if rotulo == label_destaque else 0.35
                 for rotulo in trace.x
             ]
+    # Linha de saldo (renda − despesa) por mês: mostra de relance onde o
+    # mês fechou no vermelho.
+    ordem_labels = list(dict.fromkeys(agg["mes_label"]))
+    pivot = (
+        agg.pivot_table(
+            index="mes_label",
+            columns="categoria_fluxo",
+            values="valor_abs",
+            aggfunc="sum",
+        )
+        .reindex(columns=["Receita", "Despesa"])
+        .fillna(0.0)
+        .reindex(ordem_labels)
+    )
+    fig.add_scatter(
+        x=ordem_labels,
+        y=(pivot["Receita"] - pivot["Despesa"]).tolist(),
+        mode="lines+markers",
+        name="Saldo",
+        line={"color": "#2563EB", "width": 2},
+        hovertemplate="Saldo: R$ %{y:,.0f}<extra></extra>",
+    )
+    fig.add_hline(y=0, line_width=1, line_dash="dot", line_color="#888888")
     fig.update_layout(yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f")
     # `on_select="rerun"` torna as barras clicáveis: cada clique salva
     # o ponto em `st.session_state[KEY_BAR_CHART_EVT]`. O `render()` lê
@@ -251,6 +276,112 @@ def _grafico_barras_mensal(
         selection_mode="points",
         key=KEY_BAR_CHART_EVT,
     )
+
+
+def _painel_este_mes(df: pd.DataFrame) -> None:
+    """Bloco "Este mês": renda, comprometido, variável e quanto sobra por dia."""
+    painel = painel_mes(df)
+    if painel is None:
+        return
+
+    nome = ref_para_nome_br(painel.referencia_mes) or painel.referencia_mes
+    st.subheader(f"Este mês — {nome}")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric(
+        "Renda (estimada)" if painel.renda_estimada else "Renda do mês",
+        formatar_brl(painel.renda),
+        help=(
+            "O salário ainda não entrou: usando a média dos últimos meses."
+            if painel.renda_estimada
+            else "Renda já lançada neste mês (empréstimos não contam)."
+        ),
+    )
+    c2.metric(
+        "Já comprometido",
+        formatar_brl(painel.comprometido),
+        help="Linhas da planilha (contas fixas, financiamentos) e parcelas.",
+    )
+    c3.metric("Gasto variável", formatar_brl(painel.variavel))
+    c4.metric(
+        "Disponível",
+        formatar_brl(painel.disponivel),
+        delta=(
+            f"{formatar_brl(painel.por_dia)} por dia"
+            if painel.disponivel > 0
+            else "No vermelho"
+        ),
+        delta_color="off",
+        help="Renda − comprometido − gasto variável.",
+    )
+    c5.metric("Dias restantes", str(painel.dias_restantes))
+
+    if painel.disponivel < 0:
+        st.error(
+            f"Este mês já está {formatar_brl_md(abs(painel.disponivel))} no vermelho. "
+            "Congele compras novas e revise o variável."
+        )
+
+    teto = teto_cartao()
+    if teto:
+        uso = painel.cartao / teto
+        st.progress(
+            min(uso, 1.0),
+            text=(
+                f"Cartão: {formatar_brl(painel.cartao)} de {formatar_brl(teto)} "
+                f"({uso * 100:.0f}% do teto)"
+            ),
+        )
+        if uso > 1:
+            st.warning(
+                f"Teto do cartão estourado em {formatar_brl_md(painel.cartao - teto)}."
+            )
+    else:
+        st.caption(
+            f"Cartão neste mês: {formatar_brl_md(painel.cartao)}. "
+            "Defina um teto abaixo para acompanhar."
+        )
+    with st.expander("Teto mensal do cartão"):
+        novo = st.number_input(
+            "Teto (R$)",
+            min_value=0.0,
+            value=float(teto or 0.0),
+            step=100.0,
+            key="dashboard_teto_cartao",
+            help="0 remove o teto. Vale para todos os meses.",
+        )
+        if st.button("Salvar teto", key="btn_salvar_teto_cartao"):
+            salvar_teto_cartao(novo)
+            st.rerun()
+    st.divider()
+
+
+def _grafico_cartao_teto(df: pd.DataFrame) -> None:
+    """Gasto no cartão por mês, com a linha do teto (se definido)."""
+    cartao = cartao_por_mes(df)
+    if cartao.empty:
+        return
+    cartao = cartao.assign(
+        mes_label=cartao["referencia_mes"].map(ref_para_nome_br)
+    )
+    fig = px.bar(
+        cartao,
+        x="mes_label",
+        y="valor",
+        title="Gasto no cartão por mês",
+        labels={"mes_label": "Mês", "valor": "Cartão (R$)"},
+        color_discrete_sequence=["#F59E0B"],
+    )
+    teto = teto_cartao()
+    if teto:
+        fig.add_hline(
+            y=teto,
+            line_dash="dash",
+            line_color="#EF553B",
+            annotation_text=f"Teto {formatar_brl(teto)}",
+            annotation_position="top left",
+        )
+    fig.update_layout(yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f")
+    st.plotly_chart(fig, width="stretch", key="dashboard_cartao_teto")
 
 
 def _ref_iso_do_label(label_pt: str, df: pd.DataFrame) -> str | None:
@@ -741,6 +872,8 @@ def render() -> None:
     # atual já vem com modo=Mensal e mês selecionado.
     _aplicar_clique_barra(df)
 
+    _painel_este_mes(df)
+
     col_ano, col_modo, col_mes, col_limpar = st.columns([1, 1, 1, 0.7])
     with col_ano:
         ano = selecionar_ano(df)
@@ -833,6 +966,8 @@ def render() -> None:
         _grafico_barras_mensal(df_recorte, ref_destaque=ref_selecionada)
     with col_b:
         _grafico_pizza_categorias(df_fluxo)
+
+    _grafico_cartao_teto(df_kpi)
 
     st.divider()
     _kpis_grupos_despesa(df_fluxo, titulo_periodo=titulo_periodo)

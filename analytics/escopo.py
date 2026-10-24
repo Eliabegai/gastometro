@@ -270,7 +270,7 @@ def comparativo_pessoas(
     return out
 
 
-def _mascara_fixo(despesas: pd.DataFrame) -> pd.Series:
+def mascara_fixo(despesas: pd.DataFrame) -> pd.Series:
     """Despesas de valor já certo no mês: linhas da planilha (datadas no dia
     01 por convenção) e parcelas. Não crescem com o ritmo de gasto."""
     fixo = pd.Series(False, index=despesas.index)
@@ -317,7 +317,7 @@ def projetar_despesa_mes(
     if float(despesas["valor"].sum()) <= 0:
         return 0.0
 
-    fixo = _mascara_fixo(despesas)
+    fixo = mascara_fixo(despesas)
     gasto_fixo = float(despesas.loc[fixo, "valor"].sum())
     gasto_variavel = float(despesas.loc[~fixo, "valor"].sum())
 
