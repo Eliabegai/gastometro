@@ -158,10 +158,19 @@ def _imprimir_top_outros_gastos(df: pd.DataFrame, top_n: int = 10) -> None:
     if outros.empty:
         return
 
+    from analytics.recorrentes import chave_merchant
+
+    outros = outros.assign(
+        chave=outros["descricao"].astype(str).map(chave_merchant)
+    )
+    outros["chave"] = outros["chave"].where(
+        outros["chave"] != "", outros["descricao"].astype(str)
+    )
     agregado = (
-        outros.groupby("descricao")["valor"]
+        outros.groupby("chave")["valor"]
         .agg(soma="sum", n="count")
         .reset_index()
+        .rename(columns={"chave": "descricao"})
         .sort_values("soma", ascending=False)
         .head(top_n)
     )

@@ -20,6 +20,7 @@ from typing import Any
 import pandas as pd
 from sqlmodel import Session, col, select
 
+from analytics.recorrentes import chave_merchant
 from categorias import _normalizar as normalizar_descricao  # noqa: PLC2701
 from categorias import categorizar as categorizar_por_regras
 from db.engine import get_session
@@ -288,6 +289,15 @@ def _obter_ou_criar_categoria(
     return cat
 
 
+PREFIXO_OVERRIDE_MERCHANT = "m:"
+
+
+def chave_override_merchant(descricao: str) -> str:
+    """Chave de override por comerciante (`m:<chave_merchant>`), ou `""`."""
+    chave = chave_merchant(descricao)
+    return f"{PREFIXO_OVERRIDE_MERCHANT}{chave}" if chave else ""
+
+
 def _cache_overrides(session: Session) -> dict[str, int]:
     """Mapa descricao_normalizada -> categoria_id (lido uma vez por sessão)."""
     rows = session.exec(select(OverrideCategoria)).all()
@@ -305,8 +315,11 @@ def _categorizar_para_id(
     quando o dicionário tem uma categoria nova ainda não semeada).
     """
     norm = normalizar_descricao(descricao)
-    if norm in overrides:
-        cat_id = overrides[norm]
+    # 1) override exato da descrição; 2) override do comerciante (cobre
+    # variantes de grafia/numeração da mesma loja).
+    chave = norm if norm in overrides else chave_override_merchant(descricao)
+    if chave and chave in overrides:
+        cat_id = overrides[chave]
         cat = session.get(Categoria, cat_id)
         nome = cat.nome if cat else ""
         return cat_id, nome
@@ -991,19 +1004,31 @@ def salvar_override(descricao: str, categoria_nome: str) -> None:
     A descrição é normalizada antes de salvar. Se a categoria não
     existir, é criada como despesa.
     """
-    norm = normalizar_descricao(descricao)
-    if not norm or not categoria_nome:
+    _gravar_override(normalizar_descricao(descricao), categoria_nome)
+
+
+def salvar_override_merchant(descricao: str, categoria_nome: str) -> None:
+    """Override por **comerciante**: vale para toda variante da descrição.
+
+    "UBER *TRIP 123" e "UBER *TRIP 456" compartilham a chave, então uma
+    regra cobre as duas (e as futuras). Sem chave utilizável, cai no
+    override exato. Um override exato continua tendo precedência.
+    """
+    chave = chave_override_merchant(descricao)
+    _gravar_override(chave or normalizar_descricao(descricao), categoria_nome)
+
+
+def _gravar_override(chave: str, categoria_nome: str) -> None:
+    if not chave or not categoria_nome:
         return
     with get_session() as session:
         cat = _obter_ou_criar_categoria(
             session, nome=categoria_nome.strip(), tipo=TIPO_CATEGORIA_DESPESA
         )
-        existente = session.get(OverrideCategoria, norm)
+        existente = session.get(OverrideCategoria, chave)
         if existente is None:
             session.add(
-                OverrideCategoria(
-                    descricao_normalizada=norm, categoria_id=cat.id
-                )
+                OverrideCategoria(descricao_normalizada=chave, categoria_id=cat.id)
             )
         else:
             existente.categoria_id = cat.id
