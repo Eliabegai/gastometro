@@ -67,6 +67,7 @@ from app.helpers import (
 )
 from app.preferencias import salvar_teto_cartao, teto_cartao
 from app.ui_orcamento import render_barra_limite
+from app.visao import alternar_resumo, colunas
 from db.repository import listar_escopos_categoria_dict, listar_orcamentos_df
 
 # Paleta com significado, usada em todo o Dashboard: vermelho = saiu,
@@ -175,7 +176,7 @@ def _kpis_mes(df: pd.DataFrame, ref: str, ref_anterior: str) -> dict[str, float]
 
 
 def _grafico_barras_mensal(
-    df: pd.DataFrame, *, ref_destaque: str | None = None
+    df: pd.DataFrame, *, ref_destaque: str | None = None, resumido: bool = False
 ) -> None:
     """Barras mensais: 1 par por mês (Despesa vs Receita).
 
@@ -277,6 +278,12 @@ def _grafico_barras_mensal(
     )
     fig.add_hline(y=0, line_width=1, line_dash="dot", line_color="#888888")
     fig.update_layout(yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f")
+    if resumido:
+        fig.update_layout(
+            height=300,
+            legend={"orientation": "h", "y": -0.3},
+            margin={"l": 0, "r": 0, "t": 40, "b": 0},
+        )
     # `on_select="rerun"` torna as barras clicáveis: cada clique salva
     # o ponto em `st.session_state[KEY_BAR_CHART_EVT]`. O `render()` lê
     # essa chave **antes** dos controles do topo pra ajustar modo/mês.
@@ -317,7 +324,7 @@ def _alertas_topo(df: pd.DataFrame) -> None:
             st.warning(alerta.texto)
 
 
-def _painel_este_mes(df: pd.DataFrame) -> None:
+def _painel_este_mes(df: pd.DataFrame, resumido: bool = False) -> None:
     """Bloco "Este mês": renda, comprometido, variável e quanto sobra por dia."""
     painel = painel_mes(df)
     if painel is None:
@@ -325,7 +332,7 @@ def _painel_este_mes(df: pd.DataFrame) -> None:
 
     nome = ref_para_nome_br(painel.referencia_mes) or painel.referencia_mes
     st.subheader(f"Este mês — {nome}")
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5 = colunas(5, resumido)
     c1.metric(
         "Renda (estimada)" if painel.renda_estimada else "Renda do mês",
         formatar_brl(painel.renda),
@@ -474,7 +481,9 @@ def _aplicar_clique_barra(df: pd.DataFrame) -> None:
     st.session_state[f"{CHAVE_MES}__widget"] = str(label)
 
 
-def _grafico_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAFICO) -> None:
+def _grafico_categorias(
+    df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAFICO, resumido: bool = False
+) -> None:
     """Barras horizontais: top N categorias de **despesa** + 'Outras'.
 
     Mais legível que pizza com 10 fatias. "Outros Gastos" aparece em âmbar:
@@ -525,7 +534,7 @@ def _grafico_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAFICO) -
         yaxis={"categoryorder": "total ascending"},
         xaxis_tickprefix="R$ ",
         xaxis_tickformat=",.0f",
-        height=max(320, 34 * len(dados) + 80),
+        height=max(240 if resumido else 320, 34 * len(dados) + 80),
         margin={"r": 90},
     )
     st.plotly_chart(fig, width="stretch")
@@ -825,14 +834,14 @@ def _top_categorias_periodo(
 
 
 def _kpis_anuais(
-    df_recorte: pd.DataFrame, rotulo_ano: str
+    df_recorte: pd.DataFrame, rotulo_ano: str, resumido: bool = False
 ) -> None:
     """4 KPIs do ano: Despesas, Receitas, Saldo, Qtde."""
     desp = _soma_por_tipo(df_recorte, "despesa")
     rec = _soma_por_tipo(df_recorte, "receita")
     saldo = rec - desp
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4 = colunas(4, resumido)
     _kpi_card(c1, f"Despesas {rotulo_ano}", formatar_brl(desp))
     _kpi_card(c2, f"Receitas {rotulo_ano}", formatar_brl(rec))
     _kpi_card(
@@ -851,7 +860,7 @@ def _kpis_anuais(
 
 
 def _kpis_mensais(
-    df_recorte: pd.DataFrame, ref: str
+    df_recorte: pd.DataFrame, ref: str, resumido: bool = False
 ) -> None:
     """4 KPIs do mês `ref`: Despesas (Δ), Receitas (Δ), Saldo, Qtde."""
     refs_anuais = _refs_ordenadas(df_recorte)
@@ -865,7 +874,7 @@ def _kpis_mensais(
     label_mes = ref_para_nome_br(ref) or "—"
     label_ant = ref_para_nome_br(anterior) or "mês anterior"
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4 = colunas(4, resumido)
     _kpi_card(
         c1,
         f"Despesas em {label_mes}",
@@ -902,6 +911,7 @@ def _kpis_mensais(
 
 def render() -> None:
     st.title("💸 Gastômetro — Dashboard")
+    resumido = alternar_resumo()
 
     # Hidrata filtros globais (`ano`, `mes`, `modo`) a partir da URL
     # antes de renderizar qualquer widget. Idempotente: só hidrata se
@@ -926,7 +936,7 @@ def render() -> None:
     _aplicar_clique_barra(df)
 
     _alertas_topo(df)
-    _painel_este_mes(df)
+    _painel_este_mes(df, resumido)
 
     col_ano, col_modo, col_mes, col_limpar = st.columns([1, 1, 1, 0.7])
     with col_ano:
@@ -986,9 +996,9 @@ def render() -> None:
 
     # KPIs adequados à visão escolhida
     if modo == MODO_MENSAL and ref_selecionada:
-        _kpis_mensais(df_recorte, ref_selecionada)
+        _kpis_mensais(df_recorte, ref_selecionada, resumido)
     else:
-        _kpis_anuais(df_kpi, rotulo_ano)
+        _kpis_anuais(df_kpi, rotulo_ano, resumido)
         if previstos and not usar_todos:
             st.caption(
                 "Realizado até o mês corrente. Previsto (fora dos KPIs): "
@@ -1013,6 +1023,13 @@ def render() -> None:
         "💡 Dica: **clique em qualquer barra do gráfico abaixo** para "
         "ver os detalhes daquele mês."
     )
+    if resumido:
+        _grafico_barras_mensal(df_recorte, ref_destaque=ref_selecionada, resumido=True)
+        _grafico_categorias(df_fluxo, top_n=5, resumido=True)
+        st.caption("Visão resumida ligada: desligue o toggle do topo para ver o detalhe completo.")
+        persistir_globais()
+        return
+
     col_a, col_b = st.columns([3, 2])
     with col_a:
         # Barras mensais sempre mostram o ano todo (contexto), com

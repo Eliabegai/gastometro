@@ -46,16 +46,17 @@ from app.helpers import (
     rotulo_periodo_global,
     sidebar_filtros_lancamentos,
 )
+from app.visao import alternar_resumo, colunas
 from db.repository import listar_escopos_categoria_dict
 
 
-def _resumo(df) -> None:
+def _resumo(df, resumido: bool = False) -> None:
     """Contagem + despesas líquidas + renda + saldo (regras de `analytics.fluxo`).
 
     Não existe mais "Soma": somar despesa com receita não significa nada.
     """
     fluxo = resumir_fluxo(df)
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4 = colunas(4, resumido)
     c1.metric("Lançamentos filtrados", f"{len(df):,}".replace(",", "."))
     c2.metric("Despesas (líquidas)", formatar_brl(fluxo.despesas))
     c3.metric("Renda", formatar_brl(fluxo.renda))
@@ -82,7 +83,10 @@ def _resumo(df) -> None:
 COLUNAS_TECNICAS = ("Fonte", "Arquivo origem", "Grupo recorrente")
 
 
-def _tabela(df, *, mostrar_tecnicas: bool = False) -> None:
+COLUNAS_RESUMO = ("Data", "Descrição", "Categoria", "Valor (R$)")
+
+
+def _tabela(df, *, mostrar_tecnicas: bool = False, resumido: bool = False) -> None:
     """Tabela editável-visualmente (não muta o banco) com formato BR."""
     if df.empty:
         st.info("Nenhum lançamento bate com os filtros aplicados.")
@@ -151,7 +155,9 @@ def _tabela(df, *, mostrar_tecnicas: bool = False) -> None:
         "Fonte",
         "Arquivo origem",
     ]
-    if not mostrar_tecnicas:
+    if resumido:
+        colunas_ordem = [c for c in colunas_ordem if c in COLUNAS_RESUMO]
+    elif not mostrar_tecnicas:
         colunas_ordem = [c for c in colunas_ordem if c not in COLUNAS_TECNICAS]
     visivel = visivel[[c for c in colunas_ordem if c in visivel.columns]]
 
@@ -159,7 +165,7 @@ def _tabela(df, *, mostrar_tecnicas: bool = False) -> None:
         visivel,
         width="stretch",
         hide_index=True,
-        height=560,
+        height=420 if resumido else 560,
         column_config={
             "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
             "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
@@ -209,6 +215,7 @@ def _banner_periodo_global() -> None:
 
 def render() -> None:
     st.title("Lançamentos")
+    resumido = alternar_resumo()
 
     # Hidrata tanto globais (ano/mes/modo) quanto locais (filtros da
     # sidebar) — globais vêm primeiro porque afetam quais opções
@@ -300,14 +307,16 @@ def render() -> None:
     ):
         st.rerun()
 
-    _resumo(sub)
+    _resumo(sub, resumido)
     st.divider()
-    mostrar_tecnicas = st.toggle(
-        "Mostrar colunas técnicas (fonte, arquivo, grupo)",
-        value=False,
-        key="lanc_colunas_tecnicas",
-    )
-    _tabela(sub, mostrar_tecnicas=mostrar_tecnicas)
+    mostrar_tecnicas = False
+    if not resumido:
+        mostrar_tecnicas = st.toggle(
+            "Mostrar colunas técnicas (fonte, arquivo, grupo)",
+            value=False,
+            key="lanc_colunas_tecnicas",
+        )
+    _tabela(sub, mostrar_tecnicas=mostrar_tecnicas, resumido=resumido)
     _exportar_csv(sub)
 
     persistir_lancamentos()
