@@ -46,3 +46,8 @@ categorias_usuario.json
 
 # Credenciais OAuth baixadas do Google Cloud (JSON)
 client_secret_*.json
+
+# Arquivos soltos na raiz (dados/backups locais, nunca commitar)
+*.zip
+Untitled
+/gastometro.db

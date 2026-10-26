@@ -213,7 +213,7 @@ def _renderizar_resultados(
             }
         )
 
-    st.dataframe(linhas, use_container_width=True, hide_index=True)
+    st.dataframe(linhas, width="stretch", hide_index=True)
 
 
 def render_uploader(*, key_prefix: str = "uploader") -> None:

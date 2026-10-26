@@ -22,6 +22,7 @@ from __future__ import annotations
 import streamlit as st
 
 from analytics.escopo import ESCOPO_CASAL, ESCOPO_PESSOAL, marcar_escopo
+from analytics.fluxo import marcar_previsto, resumir_fluxo
 from analytics.recorrentes import marcar_recorrentes, rotulo_tipo_recorrente
 from app.estado import (
     CHAVES_GLOBAIS,
@@ -39,36 +40,53 @@ from app.helpers import (
     carregar_lancamentos,
     filtrar_por_periodo_global,
     formatar_brl,
+    formatar_brl_md,
     periodo_global_ativo,
     ref_para_nome_br,
     rotulo_periodo_global,
     sidebar_filtros_lancamentos,
 )
+from app.visao import alternar_resumo, colunas
 from db.repository import listar_escopos_categoria_dict
 
 
-def _resumo(df) -> None:
-    """Cabeçalho com contagem + soma + soma por tipo (despesa / receita / estorno)."""
-    c1, c2, c3, c4 = st.columns(4)
+def _resumo(df, resumido: bool = False) -> None:
+    """Contagem + despesas líquidas + renda + saldo (regras de `analytics.fluxo`).
+
+    Não existe mais "Soma": somar despesa com receita não significa nada.
+    """
+    fluxo = resumir_fluxo(df)
+    c1, c2, c3, c4 = colunas(4, resumido)
     c1.metric("Lançamentos filtrados", f"{len(df):,}".replace(",", "."))
-    c2.metric("Soma (R$)", formatar_brl(float(df["valor"].sum())))
-
-    por_tipo = df.groupby("tipo")["valor"].sum().to_dict()
-    c3.metric("Despesas", formatar_brl(float(por_tipo.get("despesa", 0.0))))
-    receitas = float(por_tipo.get("receita", 0.0))
-    estornos = float(por_tipo.get("estorno", 0.0))
+    c2.metric("Despesas (líquidas)", formatar_brl(fluxo.despesas))
+    c3.metric("Renda", formatar_brl(fluxo.renda))
     c4.metric(
-        "Receitas + estornos",
-        formatar_brl(receitas + estornos),
-        delta=(
-            f"{formatar_brl(estornos)} em estornos"
-            if estornos
-            else None
-        ),
+        "Saldo (renda − despesas)",
+        formatar_brl(fluxo.saldo),
+        delta=("Superávit" if fluxo.saldo >= 0 else "Déficit"),
+        delta_color="off",
     )
+    notas: list[str] = []
+    if fluxo.estornos > 0:
+        notas.append(f"Estornos de {formatar_brl_md(fluxo.estornos)} abatidos das despesas.")
+    if fluxo.entradas_credito > 0:
+        notas.append(
+            f"Empréstimos recebidos ({formatar_brl_md(fluxo.entradas_credito)}) "
+            "não contam como renda."
+        )
+    if "previsto" in df.columns and bool(df["previsto"].any()):
+        notas.append("Há meses previstos (planilha, sem fatura) neste recorte.")
+    if notas:
+        st.caption(" ".join(notas))
 
 
-def _tabela(df) -> None:
+COLUNAS_TECNICAS = ("Fonte", "Arquivo origem", "Grupo recorrente")
+
+
+COLUNAS_RESUMO = ("Data", "Descrição", "Categoria", "Valor (R$)")
+
+
+def _tabela(df, *, mostrar_tecnicas: bool = False, resumido: bool = False) -> None:
     """Tabela editável-visualmente (não muta o banco) com formato BR."""
     if df.empty:
         st.info("Nenhum lançamento bate com os filtros aplicados.")
@@ -94,16 +112,26 @@ def _tabela(df) -> None:
             "grupo_recorrente": "Grupo recorrente",
             "tipo_recorrente": "Tipo recorrente",
             "escopo": "Escopo",
+            "previsto": "Situação",
         }
     )
+    if "Situação" in visivel.columns:
+        visivel["Situação"] = visivel["Situação"].map({True: "Previsto", False: ""})
     if "Escopo" in visivel.columns:
         visivel["Escopo"] = visivel["Escopo"].map(
             {"casal": "Casal", "pessoal": "Pessoal"}
         ).fillna("")
     if "Recorrente" in visivel.columns:
-        visivel["Recorrente"] = visivel["Recorrente"].map(
-            {True: "🔁", False: ""}
-        )
+        # 📌 compromisso fixo · 🔁 hábito que se repete
+        if "eh_fixo" in visivel.columns:
+            visivel["Recorrente"] = [
+                ("📌" if fixo else "🔁") if rec else ""
+                for rec, fixo in zip(visivel["Recorrente"], visivel["eh_fixo"], strict=True)
+            ]
+        else:
+            visivel["Recorrente"] = visivel["Recorrente"].map(
+                {True: "🔁", False: ""}
+            )
     if "Tipo recorrente" in visivel.columns:
         visivel["Tipo recorrente"] = visivel["Tipo recorrente"].map(
             lambda t: rotulo_tipo_recorrente(t) if t else ""
@@ -111,6 +139,7 @@ def _tabela(df) -> None:
     colunas_ordem = [
         "Data",
         "Referência",
+        "Situação",
         "Recorrente",
         "Tipo recorrente",
         "Descrição",
@@ -126,13 +155,17 @@ def _tabela(df) -> None:
         "Fonte",
         "Arquivo origem",
     ]
+    if resumido:
+        colunas_ordem = [c for c in colunas_ordem if c in COLUNAS_RESUMO]
+    elif not mostrar_tecnicas:
+        colunas_ordem = [c for c in colunas_ordem if c not in COLUNAS_TECNICAS]
     visivel = visivel[[c for c in colunas_ordem if c in visivel.columns]]
 
     st.dataframe(
         visivel,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
-        height=560,
+        height=420 if resumido else 560,
         column_config={
             "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
             "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
@@ -182,6 +215,7 @@ def _banner_periodo_global() -> None:
 
 def render() -> None:
     st.title("Lançamentos")
+    resumido = alternar_resumo()
 
     # Hidrata tanto globais (ano/mes/modo) quanto locais (filtros da
     # sidebar) — globais vêm primeiro porque afetam quais opções
@@ -209,6 +243,12 @@ def render() -> None:
     texto_busca = filtros.get("texto")
     sub = aplicar_filtros(df_periodo, **{**filtros, "texto": None})
 
+    ocultar_previstos = st.sidebar.checkbox(
+        "Ocultar meses previstos",
+        value=False,
+        key="f_ocultar_previstos",
+        help="Previsto = mês futuro vindo da planilha, ainda sem fatura.",
+    )
     so_recorrentes = st.sidebar.checkbox(
         "Só recorrentes",
         value=False,
@@ -241,6 +281,9 @@ def render() -> None:
         df_marcado = df_marcado[df_marcado["escopo"] == ESCOPO_CASAL]
     elif escopo_filtro == "Pessoal":
         df_marcado = df_marcado[df_marcado["escopo"] == ESCOPO_PESSOAL]
+    df_marcado = marcar_previsto(df_marcado)
+    if ocultar_previstos:
+        df_marcado = df_marcado[~df_marcado["previsto"]]
     sub = df_marcado
 
     if filtros.get("data_inicio") and filtros.get("data_fim"):
@@ -256,7 +299,7 @@ def render() -> None:
     # que ele reseta. Inclui a key auxiliar de refs (label↔iso).
     st.sidebar.divider()
     if botao_limpar_filtros(
-        list(CHAVES_LANCAMENTOS) + ["f_refs__widget"],
+        list(CHAVES_LANCAMENTOS) + ["f_refs__widget", "f_ocultar_previstos"],
         list(MAPA_LANCAMENTOS.values()),
         key="btn_limpar_lanc",
         rotulo_auxiliar="Zera pessoa, conta, categoria, tipo, busca e período",
@@ -264,9 +307,16 @@ def render() -> None:
     ):
         st.rerun()
 
-    _resumo(sub)
+    _resumo(sub, resumido)
     st.divider()
-    _tabela(sub)
+    mostrar_tecnicas = False
+    if not resumido:
+        mostrar_tecnicas = st.toggle(
+            "Mostrar colunas técnicas (fonte, arquivo, grupo)",
+            value=False,
+            key="lanc_colunas_tecnicas",
+        )
+    _tabela(sub, mostrar_tecnicas=mostrar_tecnicas, resumido=resumido)
     _exportar_csv(sub)
 
     persistir_lancamentos()

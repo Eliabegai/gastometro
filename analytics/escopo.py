@@ -270,13 +270,30 @@ def comparativo_pessoas(
     return out
 
 
+def mascara_fixo(despesas: pd.DataFrame) -> pd.Series:
+    """Despesas de valor já certo no mês: linhas da planilha (datadas no dia
+    01 por convenção) e parcelas. Não crescem com o ritmo de gasto."""
+    fixo = pd.Series(False, index=despesas.index)
+    if "fonte" in despesas.columns:
+        fixo |= despesas["fonte"].astype(str) == "planilha_historico"
+    if "parcela" in despesas.columns:
+        fixo |= despesas["parcela"].fillna("").astype(str).str.strip() != ""
+    return fixo
+
+
 def projetar_despesa_mes(
     df_mes: pd.DataFrame,
     *,
     referencia_mes: str,
     hoje: date | None = None,
 ) -> float | None:
-    """Projeta despesa total do mês pelo ritmo até hoje. None se não aplicável."""
+    """Projeta a despesa do mês corrente. `None` se não aplicável.
+
+    Projeção = parte fixa (planilha + parcelas, já lançadas) + parte
+    variável no ritmo do mês (`variável / dia_atual × dias_no_mes`).
+    Extrapolar tudo pelo ritmo inflava o total, pois linhas fixas caem
+    no dia 01 e fariam o gasto/dia parecer maior do que é.
+    """
     if df_mes.empty or not referencia_mes or "-" not in referencia_mes:
         return None
 
@@ -297,8 +314,12 @@ def projetar_despesa_mes(
         return None
 
     despesas = df_mes[df_mes["tipo"] == "despesa"]
-    gasto = float(despesas["valor"].sum())
-    if gasto <= 0:
+    if float(despesas["valor"].sum()) <= 0:
         return 0.0
 
-    return round(gasto / dia_atual * dias_no_mes, 2)
+    fixo = mascara_fixo(despesas)
+    gasto_fixo = float(despesas.loc[fixo, "valor"].sum())
+    gasto_variavel = float(despesas.loc[~fixo, "valor"].sum())
+
+    projecao_variavel = gasto_variavel / dia_atual * dias_no_mes
+    return round(gasto_fixo + projecao_variavel, 2)

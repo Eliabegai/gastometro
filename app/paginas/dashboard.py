@@ -26,6 +26,8 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from analytics.alertas import NIVEL_ERRO, montar_alertas
+from analytics.cobertura import matriz_cobertura
 from analytics.escopo import (
     marcar_escopo as _marcar_escopo,
 )
@@ -34,6 +36,13 @@ from analytics.escopo import (
     resumo_escopo_despesas,
     resumo_por_pessoa,
 )
+from analytics.fluxo import (
+    mes_corrente_iso,
+    meses_previstos,
+    resumir_fluxo,
+    separar_realizado_previsto,
+)
+from analytics.mes_atual import cartao_por_mes, painel_mes
 from analytics.orcamento import calcular_progressos, listar_alertas, resumo_alertas
 from app.estado import (
     CHAVE_ANO,
@@ -46,6 +55,7 @@ from app.estado import (
     persistir_globais,
 )
 from app.helpers import (
+    carregar_faturas,
     carregar_lancamentos,
     chave_ord_ref_iso,
     filtrar_por_ano,
@@ -55,8 +65,18 @@ from app.helpers import (
     selecionar_ano,
     selecionar_mes,
 )
+from app.preferencias import salvar_teto_cartao, teto_cartao
 from app.ui_orcamento import render_barra_limite
+from app.visao import alternar_resumo, colunas
 from db.repository import listar_escopos_categoria_dict, listar_orcamentos_df
+
+# Paleta com significado, usada em todo o Dashboard: vermelho = saiu,
+# verde = entrou, âmbar = atenção, azul = saldo, cinza-azulado = neutro.
+COR_DESPESA = "#EF553B"
+COR_RECEITA = "#00CC96"
+COR_ATENCAO = "#F59E0B"
+COR_SALDO = "#2563EB"
+COR_NEUTRA = "#64748B"
 
 MODO_ANUAL = "Ano inteiro"
 MODO_MENSAL = "Mensal"
@@ -66,6 +86,9 @@ TOP_CATEGORIAS_GRAFICO = 10
 # Chave do evento de seleção do bar chart. Mantida em `st.session_state`
 # pelo Streamlit quando `on_select="rerun"` está ativo.
 KEY_BAR_CHART_EVT = "dashboard_bar_chart_evt"
+
+# Toggle (visão anual) para incluir meses previstos nos KPIs do ano.
+CHAVE_INCLUIR_PREVISTOS = "dashboard_incluir_previstos"
 
 
 def _kpi_card(
@@ -83,21 +106,35 @@ def _kpi_card(
 
 
 def _soma_por_tipo(df: pd.DataFrame, tipo: str) -> float:
-    """Soma absoluta do tipo (`despesa`, `receita`, `estorno`).
+    """Total do tipo, pelas regras de `analytics.fluxo`.
 
-    Para `receita` inclui estornos (também são entradas reais — crédito
-    devolvido pelo banco). Para `despesa` exclui estornos. Tudo em
-    módulo (estornos vêm com sinal negativo do banco).
+    - `despesa`: despesas líquidas (compras − estornos).
+    - `receita`: renda (empréstimos recebidos ficam de fora).
+    - `estorno`: total estornado (positivo).
     """
-    if df.empty:
-        return 0.0
+    fluxo = resumir_fluxo(df)
     if tipo == "receita":
-        sub = df[df["tipo"].isin(["receita", "estorno"])]
-    else:
-        sub = df[df["tipo"] == tipo]
-    if sub.empty:
-        return 0.0
-    return float(sub["valor"].abs().sum())
+        return fluxo.renda
+    if tipo == "estorno":
+        return fluxo.estornos
+    return fluxo.despesas
+
+
+def _nota_fluxo(df: pd.DataFrame) -> None:
+    """Legenda explicando estornos abatidos e empréstimos fora da renda."""
+    fluxo = resumir_fluxo(df)
+    partes: list[str] = []
+    if fluxo.estornos > 0:
+        partes.append(
+            f"Estornos de {formatar_brl_md(fluxo.estornos)} já abatidos das despesas."
+        )
+    if fluxo.entradas_credito > 0:
+        partes.append(
+            f"Empréstimos recebidos ({formatar_brl_md(fluxo.entradas_credito)}) "
+            "não contam como receita."
+        )
+    if partes:
+        st.caption(" ".join(partes))
 
 
 def _formatar_delta(atual: float, anterior: float, label_anterior: str) -> str | None:
@@ -139,7 +176,7 @@ def _kpis_mes(df: pd.DataFrame, ref: str, ref_anterior: str) -> dict[str, float]
 
 
 def _grafico_barras_mensal(
-    df: pd.DataFrame, *, ref_destaque: str | None = None
+    df: pd.DataFrame, *, ref_destaque: str | None = None, resumido: bool = False
 ) -> None:
     """Barras mensais: 1 par por mês (Despesa vs Receita).
 
@@ -150,20 +187,32 @@ def _grafico_barras_mensal(
     if df.empty:
         return
 
-    sub = df[df["tipo"].isin(["despesa", "receita", "estorno"])].copy()
+    sub = df[df["tipo"].isin(["despesa", "receita", "estorno"])]
     if sub.empty:
         return
 
-    sub["valor_abs"] = sub["valor"].abs()
-    sub["categoria_fluxo"] = sub["tipo"].replace({"estorno": "Receita"}).replace(
-        {"despesa": "Despesa", "receita": "Receita"}
-    )
-    agg = (
-        sub.groupby(["referencia_mes", "categoria_fluxo"])["valor_abs"]
-        .sum()
-        .reset_index()
-    )
-    agg["referencia_mes"] = agg["referencia_mes"].astype(str)
+    previstos = set(meses_previstos(sub))
+    linhas: list[dict[str, object]] = []
+    for ref, grupo in sub.groupby("referencia_mes"):
+        ref_s = str(ref)
+        fluxo = resumir_fluxo(grupo)
+        situacao = "Previsto" if ref_s in previstos else "Realizado"
+        for rotulo, valor in (("Despesa", fluxo.despesas), ("Receita", fluxo.renda)):
+            linhas.append(
+                {
+                    "referencia_mes": ref_s,
+                    "categoria_fluxo": rotulo,
+                    "valor_abs": valor,
+                    "situacao": situacao,
+                }
+            )
+    agg = pd.DataFrame(linhas)
+    extras: dict[str, object] = {}
+    if previstos:
+        extras = {
+            "pattern_shape": "situacao",
+            "pattern_shape_map": {"Realizado": "", "Previsto": "/"},
+        }
     agg = agg.sort_values(
         "referencia_mes", key=lambda s: s.map(chave_ord_ref_iso)
     )
@@ -173,9 +222,9 @@ def _grafico_barras_mensal(
         ref_para_nome_br(ref_destaque) if ref_destaque else None
     )
     titulo = (
-        f"Despesas × Receitas por mês — destaque em {label_destaque}"
+        f"Despesas × Receitas e saldo por mês — destaque em {label_destaque}"
         if label_destaque
-        else "Despesas × Receitas por mês"
+        else "Despesas × Receitas e saldo por mês"
     )
 
     fig = px.bar(
@@ -189,9 +238,14 @@ def _grafico_barras_mensal(
             "mes_label": "Mês",
             "valor_abs": "Total (R$)",
             "categoria_fluxo": "Fluxo",
+            "situacao": "Situação",
         },
-        color_discrete_map={"Despesa": "#EF553B", "Receita": "#00CC96"},
+        color_discrete_map={"Despesa": COR_DESPESA, "Receita": COR_RECEITA},
+        **extras,
     )
+    for trace in fig.data:
+        # Mantém Realizado/Previsto lado a lado dentro do mesmo fluxo.
+        trace.offsetgroup = str(trace.name).split(",")[0].strip()
     if label_destaque:
         # Plotly aceita marker.opacity como lista (1 valor por barra
         # dentro do trace). Cada trace é um fluxo (Despesa/Receita).
@@ -200,17 +254,170 @@ def _grafico_barras_mensal(
                 1.0 if rotulo == label_destaque else 0.35
                 for rotulo in trace.x
             ]
+    # Linha de saldo (renda − despesa) por mês: mostra de relance onde o
+    # mês fechou no vermelho.
+    ordem_labels = list(dict.fromkeys(agg["mes_label"]))
+    pivot = (
+        agg.pivot_table(
+            index="mes_label",
+            columns="categoria_fluxo",
+            values="valor_abs",
+            aggfunc="sum",
+        )
+        .reindex(columns=["Receita", "Despesa"])
+        .fillna(0.0)
+        .reindex(ordem_labels)
+    )
+    fig.add_scatter(
+        x=ordem_labels,
+        y=(pivot["Receita"] - pivot["Despesa"]).tolist(),
+        mode="lines+markers",
+        name="Saldo",
+        line={"color": COR_SALDO, "width": 2},
+        hovertemplate="Saldo: R$ %{y:,.0f}<extra></extra>",
+    )
+    fig.add_hline(y=0, line_width=1, line_dash="dot", line_color="#888888")
     fig.update_layout(yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f")
+    if resumido:
+        fig.update_layout(
+            height=300,
+            legend={"orientation": "h", "y": -0.3},
+            margin={"l": 0, "r": 0, "t": 40, "b": 0},
+        )
     # `on_select="rerun"` torna as barras clicáveis: cada clique salva
     # o ponto em `st.session_state[KEY_BAR_CHART_EVT]`. O `render()` lê
     # essa chave **antes** dos controles do topo pra ajustar modo/mês.
     st.plotly_chart(
         fig,
-        use_container_width=True,
+        width="stretch",
         on_select="rerun",
         selection_mode="points",
         key=KEY_BAR_CHART_EVT,
     )
+
+
+def _alertas_topo(df: pd.DataFrame) -> None:
+    """Resumo curto do que pede ação agora (vermelho, teto, metas, faturas)."""
+    painel = painel_mes(df)
+    progressos = None
+    if painel is not None:
+        metas = listar_orcamentos_df(painel.referencia_mes)
+        if not metas.empty:
+            df_mes = df[df["referencia_mes"] == painel.referencia_mes]
+            overrides = listar_escopos_categoria_dict()
+            progressos = calcular_progressos(
+                _marcar_escopo(df_mes, overrides_categoria=overrides),
+                metas,
+                overrides_categoria=overrides,
+            )
+    cobertura = matriz_cobertura(carregar_faturas(), df)
+    alertas = montar_alertas(
+        painel=painel,
+        progressos=progressos,
+        cobertura=cobertura,
+        teto_cartao=teto_cartao(),
+    )
+    for alerta in alertas:
+        if alerta.nivel == NIVEL_ERRO:
+            st.error(alerta.texto)
+        else:
+            st.warning(alerta.texto)
+
+
+def _painel_este_mes(df: pd.DataFrame, resumido: bool = False) -> None:
+    """Bloco "Este mês": renda, comprometido, variável e quanto sobra por dia."""
+    painel = painel_mes(df)
+    if painel is None:
+        return
+
+    nome = ref_para_nome_br(painel.referencia_mes) or painel.referencia_mes
+    st.subheader(f"Este mês — {nome}")
+    c1, c2, c3, c4, c5 = colunas(5, resumido)
+    c1.metric(
+        "Renda (estimada)" if painel.renda_estimada else "Renda do mês",
+        formatar_brl(painel.renda),
+        help=(
+            "O salário ainda não entrou: usando a média dos últimos meses."
+            if painel.renda_estimada
+            else "Renda já lançada neste mês (empréstimos não contam)."
+        ),
+    )
+    c2.metric(
+        "Já comprometido",
+        formatar_brl(painel.comprometido),
+        help="Linhas da planilha (contas fixas, financiamentos) e parcelas.",
+    )
+    c3.metric("Gasto variável", formatar_brl(painel.variavel))
+    c4.metric(
+        "Disponível",
+        formatar_brl(painel.disponivel),
+        delta=(
+            f"{formatar_brl(painel.por_dia)} por dia"
+            if painel.disponivel > 0
+            else "No vermelho"
+        ),
+        delta_color="off",
+        help="Renda − comprometido − gasto variável.",
+    )
+    c5.metric("Dias restantes", str(painel.dias_restantes))
+
+    teto = teto_cartao()
+    if teto:
+        uso = painel.cartao / teto
+        st.progress(
+            min(uso, 1.0),
+            text=(
+                f"Cartão: {formatar_brl(painel.cartao)} de {formatar_brl(teto)} "
+                f"({uso * 100:.0f}% do teto)"
+            ),
+        )
+    else:
+        st.caption(
+            f"Cartão neste mês: {formatar_brl_md(painel.cartao)}. "
+            "Defina um teto abaixo para acompanhar."
+        )
+    with st.expander("Teto mensal do cartão"):
+        novo = st.number_input(
+            "Teto (R$)",
+            min_value=0.0,
+            value=float(teto or 0.0),
+            step=100.0,
+            key="dashboard_teto_cartao",
+            help="0 remove o teto. Vale para todos os meses.",
+        )
+        if st.button("Salvar teto", key="btn_salvar_teto_cartao"):
+            salvar_teto_cartao(novo)
+            st.rerun()
+    st.divider()
+
+
+def _grafico_cartao_teto(df: pd.DataFrame) -> None:
+    """Gasto no cartão por mês, com a linha do teto (se definido)."""
+    cartao = cartao_por_mes(df)
+    if cartao.empty:
+        return
+    cartao = cartao.assign(
+        mes_label=cartao["referencia_mes"].map(ref_para_nome_br)
+    )
+    fig = px.bar(
+        cartao,
+        x="mes_label",
+        y="valor",
+        title="Gasto no cartão por mês",
+        labels={"mes_label": "Mês", "valor": "Cartão (R$)"},
+        color_discrete_sequence=[COR_ATENCAO],
+    )
+    teto = teto_cartao()
+    if teto:
+        fig.add_hline(
+            y=teto,
+            line_dash="dash",
+            line_color="#EF553B",
+            annotation_text=f"Teto {formatar_brl(teto)}",
+            annotation_position="top left",
+        )
+    fig.update_layout(yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f")
+    st.plotly_chart(fig, width="stretch", key="dashboard_cartao_teto")
 
 
 def _ref_iso_do_label(label_pt: str, df: pd.DataFrame) -> str | None:
@@ -274,11 +481,14 @@ def _aplicar_clique_barra(df: pd.DataFrame) -> None:
     st.session_state[f"{CHAVE_MES}__widget"] = str(label)
 
 
-def _grafico_pizza_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAFICO) -> None:
-    """Pizza: top N categorias de **despesa** + 'Outras'.
+def _grafico_categorias(
+    df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAFICO, resumido: bool = False
+) -> None:
+    """Barras horizontais: top N categorias de **despesa** + 'Outras'.
 
-    Receitas ficam fora — categorizar "Salário" e "Dízimo" no mesmo
-    gráfico não tem leitura útil.
+    Mais legível que pizza com 10 fatias. "Outros Gastos" aparece em âmbar:
+    é a categoria que ainda não foi explicada e merece atenção.
+    Receitas ficam fora — "Salário" e "Dízimo" no mesmo gráfico não leem bem.
     """
     if df.empty:
         return
@@ -297,14 +507,37 @@ def _grafico_pizza_categorias(df: pd.DataFrame, top_n: int = TOP_CATEGORIAS_GRAF
     else:
         agg = soma_cat
 
-    fig = px.pie(
-        names=agg.index,
-        values=agg.values,
-        title=f"Despesas por categoria (top {top_n})",
-        hole=0.35,
+    total = float(agg.sum())
+    dados = pd.DataFrame(
+        {
+            "categoria": agg.index,
+            "valor": agg.values,
+            "rotulo": [
+                f"{formatar_brl(float(v))} · {v / total * 100:.0f}%" for v in agg.values
+            ],
+        }
     )
-    fig.update_traces(textposition="inside", textinfo="percent+label")
-    st.plotly_chart(fig, use_container_width=True)
+    cores = [
+        COR_ATENCAO if cat == "Outros Gastos" else COR_NEUTRA for cat in dados["categoria"]
+    ]
+    fig = px.bar(
+        dados,
+        x="valor",
+        y="categoria",
+        orientation="h",
+        text="rotulo",
+        title=f"Despesas por categoria (top {top_n})",
+        labels={"valor": "Total (R$)", "categoria": ""},
+    )
+    fig.update_traces(marker_color=cores, textposition="outside", cliponaxis=False)
+    fig.update_layout(
+        yaxis={"categoryorder": "total ascending"},
+        xaxis_tickprefix="R$ ",
+        xaxis_tickformat=",.0f",
+        height=max(240 if resumido else 320, 34 * len(dados) + 80),
+        margin={"r": 90},
+    )
+    st.plotly_chart(fig, width="stretch")
 
 
 # Grupos de despesa que o usuário acompanha com KPIs dedicados no
@@ -436,7 +669,7 @@ def _grafico_casal_pessoal(resumo: dict[str, float], por_pessoa: pd.DataFrame) -
         )
         fig.update_traces(textposition="inside", textinfo="percent+label")
         fig.update_layout(showlegend=False, margin=dict(t=40, b=20, l=20, r=20))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with col_barras:
         if por_pessoa.empty:
@@ -452,7 +685,7 @@ def _grafico_casal_pessoal(resumo: dict[str, float], por_pessoa: pd.DataFrame) -
                 y="pessoa",
                 orientation="h",
                 text=por_pessoa["total"].map(lambda v: formatar_brl(float(v))),
-                color_discrete_sequence=["#F59E0B"],
+                color_discrete_sequence=[COR_ATENCAO],
             )
             fig.update_traces(textposition="inside", insidetextanchor="end")
             fig.update_layout(
@@ -462,7 +695,7 @@ def _grafico_casal_pessoal(resumo: dict[str, float], por_pessoa: pd.DataFrame) -
                 height=max(160, 56 * len(por_pessoa)),
             )
             fig.update_xaxes(visible=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 
 def _painel_escopo_e_orcamento(
@@ -588,7 +821,7 @@ def _top_categorias_periodo(
     st.subheader(f"Top {top_n} categorias por despesa — {titulo_periodo}")
     st.dataframe(
         agg,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Total (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
@@ -601,14 +834,14 @@ def _top_categorias_periodo(
 
 
 def _kpis_anuais(
-    df_recorte: pd.DataFrame, rotulo_ano: str
+    df_recorte: pd.DataFrame, rotulo_ano: str, resumido: bool = False
 ) -> None:
     """4 KPIs do ano: Despesas, Receitas, Saldo, Qtde."""
     desp = _soma_por_tipo(df_recorte, "despesa")
     rec = _soma_por_tipo(df_recorte, "receita")
     saldo = rec - desp
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4 = colunas(4, resumido)
     _kpi_card(c1, f"Despesas {rotulo_ano}", formatar_brl(desp))
     _kpi_card(c2, f"Receitas {rotulo_ano}", formatar_brl(rec))
     _kpi_card(
@@ -623,10 +856,11 @@ def _kpis_anuais(
         "Lançamentos no período",
         f"{len(df_recorte):,}".replace(",", "."),
     )
+    _nota_fluxo(df_recorte)
 
 
 def _kpis_mensais(
-    df_recorte: pd.DataFrame, ref: str
+    df_recorte: pd.DataFrame, ref: str, resumido: bool = False
 ) -> None:
     """4 KPIs do mês `ref`: Despesas (Δ), Receitas (Δ), Saldo, Qtde."""
     refs_anuais = _refs_ordenadas(df_recorte)
@@ -640,7 +874,7 @@ def _kpis_mensais(
     label_mes = ref_para_nome_br(ref) or "—"
     label_ant = ref_para_nome_br(anterior) or "mês anterior"
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4 = colunas(4, resumido)
     _kpi_card(
         c1,
         f"Despesas em {label_mes}",
@@ -668,10 +902,16 @@ def _kpis_mensais(
         f"Lançamentos em {label_mes}",
         f"{qtd:,}".replace(",", "."),
     )
+    _nota_fluxo(df_recorte[df_recorte["referencia_mes"] == ref])
+    if ref > mes_corrente_iso():
+        st.info(
+            f"{label_mes} é um mês **previsto** (vem da planilha, ainda sem fatura)."
+        )
 
 
 def render() -> None:
     st.title("💸 Gastômetro — Dashboard")
+    resumido = alternar_resumo()
 
     # Hidrata filtros globais (`ano`, `mes`, `modo`) a partir da URL
     # antes de renderizar qualquer widget. Idempotente: só hidrata se
@@ -695,6 +935,9 @@ def render() -> None:
     # atual já vem com modo=Mensal e mês selecionado.
     _aplicar_clique_barra(df)
 
+    _alertas_topo(df)
+    _painel_este_mes(df, resumido)
+
     col_ano, col_modo, col_mes, col_limpar = st.columns([1, 1, 1, 0.7])
     with col_ano:
         ano = selecionar_ano(df)
@@ -715,17 +958,32 @@ def render() -> None:
             key=CHAVE_MODO,
         )
 
+    previstos = meses_previstos(df_recorte)
+    incluir_previstos = False
     ref_selecionada: str | None = None
     if modo == MODO_MENSAL:
         with col_mes:
             ref_selecionada = selecionar_mes(df_recorte)
+    elif previstos:
+        with col_mes:
+            incluir_previstos = st.toggle(
+                "Incluir meses previstos",
+                value=False,
+                key=CHAVE_INCLUIR_PREVISTOS,
+                help="Meses futuros vêm da planilha, sem fatura. "
+                "Por padrão ficam fora dos KPIs do ano.",
+            )
+
+    df_realizado, _ = separar_realizado_previsto(df_recorte)
+    usar_todos = modo == MODO_MENSAL or incluir_previstos or df_realizado.empty
+    df_kpi = df_recorte if usar_todos else df_realizado
 
     with col_limpar:
         # Alinhamento vertical: spacer fake pra empurrar o botão pra
         # base da linha (selectboxes têm label em cima).
         st.markdown("&nbsp;", unsafe_allow_html=True)
         if botao_limpar_filtros(
-            CHAVES_GLOBAIS + (f"{CHAVE_MES}__widget",),
+            CHAVES_GLOBAIS + (f"{CHAVE_MES}__widget", CHAVE_INCLUIR_PREVISTOS),
             MAPA_GLOBAIS.values(),
             key="btn_limpar_dashboard",
             rotulo_auxiliar="Volta ao ano corrente, visão anual",
@@ -738,9 +996,15 @@ def render() -> None:
 
     # KPIs adequados à visão escolhida
     if modo == MODO_MENSAL and ref_selecionada:
-        _kpis_mensais(df_recorte, ref_selecionada)
+        _kpis_mensais(df_recorte, ref_selecionada, resumido)
     else:
-        _kpis_anuais(df_recorte, rotulo_ano)
+        _kpis_anuais(df_kpi, rotulo_ano, resumido)
+        if previstos and not usar_todos:
+            st.caption(
+                "Realizado até o mês corrente. Previsto (fora dos KPIs): "
+                + ", ".join(ref_para_nome_br(m) for m in previstos)
+                + "."
+            )
 
     st.divider()
 
@@ -750,7 +1014,7 @@ def render() -> None:
         df_fluxo = df_recorte[df_recorte["referencia_mes"] == ref_selecionada]
         titulo_periodo = ref_para_nome_br(ref_selecionada) or "—"
     else:
-        df_fluxo = df_recorte
+        df_fluxo = df_kpi
         titulo_periodo = rotulo_ano.replace("no ano ", "").replace(
             "(todo o histórico)", "todo o histórico"
         )
@@ -759,13 +1023,22 @@ def render() -> None:
         "💡 Dica: **clique em qualquer barra do gráfico abaixo** para "
         "ver os detalhes daquele mês."
     )
+    if resumido:
+        _grafico_barras_mensal(df_recorte, ref_destaque=ref_selecionada, resumido=True)
+        _grafico_categorias(df_fluxo, top_n=5, resumido=True)
+        st.caption("Visão resumida ligada: desligue o toggle do topo para ver o detalhe completo.")
+        persistir_globais()
+        return
+
     col_a, col_b = st.columns([3, 2])
     with col_a:
         # Barras mensais sempre mostram o ano todo (contexto), com
         # destaque visual no mês selecionado quando aplicável.
         _grafico_barras_mensal(df_recorte, ref_destaque=ref_selecionada)
     with col_b:
-        _grafico_pizza_categorias(df_fluxo)
+        _grafico_categorias(df_fluxo)
+
+    _grafico_cartao_teto(df_kpi)
 
     st.divider()
     _kpis_grupos_despesa(df_fluxo, titulo_periodo=titulo_periodo)
@@ -776,7 +1049,7 @@ def render() -> None:
         df_painel = df_recorte[df_recorte["referencia_mes"] == ref_selecionada]
         _painel_escopo_e_orcamento(df_painel, ref_selecionada)
     else:
-        _painel_escopo_e_orcamento(df_recorte, None)
+        _painel_escopo_e_orcamento(df_kpi, None)
 
     # Persiste filtros globais na URL (idempotente). Roda no fim do
     # render pra capturar o último valor dos widgets.

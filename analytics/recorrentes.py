@@ -196,6 +196,27 @@ TIPOS_RECORRENTE: dict[str, TipoRecorrente] = {
 }
 
 
+# Compromissos fixos: valor e data previsíveis, só mudam com renegociação.
+# `compra_recorrente` (mercado, combustível…) e `outro` são HÁBITOS: o
+# valor depende de decisão do mês e dá pra cortar.
+TIPOS_FIXOS = frozenset(
+    {
+        "assinatura",
+        "conta_fixa",
+        "financiamento",
+        "emprestimo",
+        "fatura_cartao",
+        "educacao",
+        "doacao",
+    }
+)
+
+
+def eh_tipo_fixo(tipo_id: str) -> bool:
+    """`True` para compromisso fixo; `False` para hábito de compra/outro."""
+    return tipo_id in TIPOS_FIXOS
+
+
 def rotulo_tipo_recorrente(tipo_id: str) -> str:
     """Rótulo com emoji pra exibição na UI."""
     info = TIPOS_RECORRENTE.get(tipo_id, TIPOS_RECORRENTE["outro"])
@@ -373,6 +394,7 @@ def marcar_recorrentes(
         out["eh_recorrente"] = False
         out["grupo_recorrente"] = ""
         out["tipo_recorrente"] = ""
+        out["eh_fixo"] = False
         return out
 
     cols = _resolver_colunas(df)
@@ -383,6 +405,7 @@ def marcar_recorrentes(
     out["eh_recorrente"] = False
     out["grupo_recorrente"] = ""
     out["tipo_recorrente"] = ""
+    out["eh_fixo"] = False
 
     if padroes.empty:
         return out
@@ -403,6 +426,7 @@ def marcar_recorrentes(
     out.loc[mascara, "eh_recorrente"] = True
     out.loc[mascara, "grupo_recorrente"] = out.loc[mascara, "_chave"].map(chave_para_desc)
     out.loc[mascara, "tipo_recorrente"] = out.loc[mascara, "_chave"].map(chave_para_tipo)
+    out["eh_fixo"] = out["tipo_recorrente"].map(eh_tipo_fixo).astype(bool)
     return out.drop(columns=["_chave"])
 
 

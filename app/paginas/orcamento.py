@@ -306,7 +306,7 @@ def _secao_escopo_categorias(df_mes, referencia: str) -> None:
             st.dataframe(
                 prev.sort_values("Data", ascending=False).head(15),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
                 },

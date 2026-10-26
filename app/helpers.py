@@ -323,7 +323,9 @@ def selecionar_mes(
     Streamlit não permite mexer em `session_state[key]` depois do widget
     com a mesma key — o padrão "mirror" resolve isso elegantemente.
 
-    Default = último mês com dados no recorte. Devolve a referência ISO
+    Default = mês corrente (ou o último mês com dados até ele). Meses
+    futuros são previsões da planilha e não devem abrir por padrão.
+    Devolve a referência ISO
     selecionada ou `None` se o recorte está vazio.
 
     Se `session_state[key]` apontar pra uma ref que não existe no recorte
@@ -352,7 +354,15 @@ def selecionar_mes(
             # ISO inválido pra este recorte → limpa pra cair no default.
             st.session_state.pop(key, None)
 
-    escolha = st.selectbox(label, rotulos, index=0, key=widget_key)
+    # `opcoes_iso` está em ordem decrescente: o primeiro ≤ mês corrente
+    # é o default. Se todos forem futuros, cai no mais recente.
+    hoje_iso = f"{date.today().year:04d}-{date.today().month:02d}"
+    indice_padrao = next(
+        (i for i, r in enumerate(opcoes_iso) if r <= hoje_iso), 0
+    )
+    escolha = st.selectbox(
+        label, rotulos, index=indice_padrao, key=widget_key
+    )
     iso = label_to_iso.get(escolha)
     if iso:
         st.session_state[key] = iso

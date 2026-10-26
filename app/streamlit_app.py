@@ -4,8 +4,8 @@ Rodar:
     streamlit run app/streamlit_app.py
 
 Navegação via `st.navigation` (Streamlit 1.30+): cada página é um
-`st.Page` separado em `app/paginas/`. A sidebar mostra o menu
-automaticamente; títulos/ícones definidos abaixo.
+`st.Page` separado em `app/paginas/`, agrupado em seções
+(Visão geral, Planejar, Dados, Configuração).
 
 O entrypoint também garante que o schema exista (idempotente) — o
 usuário pode abrir o app sem ter rodado a CLI antes.
@@ -56,59 +56,67 @@ def main() -> None:
     _bootstrap_banco()
     renderizar_barra_usuario()
 
-    paginas = [
-        st.Page(
-            str(PAGINAS / "dashboard.py"),
-            title="Dashboard",
-            icon=":material/dashboard:",
-            default=True,
-        ),
-        st.Page(
-            str(PAGINAS / "lancamentos.py"),
-            title="Lançamentos",
-            icon=":material/list_alt:",
-        ),
-        st.Page(
-            str(PAGINAS / "recorrentes.py"),
-            title="Recorrentes",
-            icon=":material/autorenew:",
-        ),
-        st.Page(
-            str(PAGINAS / "orcamento.py"),
-            title="Orçamento",
-            icon=":material/savings:",
-        ),
-        st.Page(
-            str(PAGINAS / "diagnostico.py"),
-            title="Diagnóstico",
-            icon=":material/monitor_heart:",
-        ),
-        st.Page(
-            str(PAGINAS / "dividas.py"),
-            title="Dívidas",
-            icon=":material/account_balance:",
-        ),
-        st.Page(
-            str(PAGINAS / "casal.py"),
-            title="Casal",
-            icon=":material/favorite:",
-        ),
-        st.Page(
-            str(PAGINAS / "faturas.py"),
-            title="Faturas",
-            icon=":material/receipt_long:",
-        ),
-        st.Page(
-            str(PAGINAS / "categorias.py"),
-            title="Categorias",
-            icon=":material/sell:",
-        ),
-        st.Page(
-            str(PAGINAS / "importar.py"),
-            title="Importar",
-            icon=":material/upload_file:",
-        ),
-    ]
+    paginas = {
+        "Visão geral": [
+            st.Page(
+                str(PAGINAS / "dashboard.py"),
+                title="Dashboard",
+                icon=":material/dashboard:",
+                default=True,
+            ),
+            st.Page(
+                str(PAGINAS / "casal.py"),
+                title="Casal",
+                icon=":material/favorite:",
+            ),
+        ],
+        "Planejar": [
+            st.Page(
+                str(PAGINAS / "orcamento.py"),
+                title="Orçamento",
+                icon=":material/savings:",
+            ),
+            st.Page(
+                str(PAGINAS / "dividas.py"),
+                title="Dívidas",
+                icon=":material/account_balance:",
+            ),
+            st.Page(
+                str(PAGINAS / "diagnostico.py"),
+                title="Diagnóstico",
+                icon=":material/monitor_heart:",
+            ),
+        ],
+        "Dados": [
+            st.Page(
+                str(PAGINAS / "lancamentos.py"),
+                title="Lançamentos",
+                icon=":material/list_alt:",
+            ),
+            st.Page(
+                str(PAGINAS / "recorrentes.py"),
+                title="Recorrentes",
+                icon=":material/autorenew:",
+            ),
+            st.Page(
+                str(PAGINAS / "faturas.py"),
+                title="Faturas",
+                icon=":material/receipt_long:",
+            ),
+        ],
+        "Configuração": [
+            st.Page(
+                str(PAGINAS / "categorias.py"),
+                title="Categorias",
+                icon=":material/sell:",
+            ),
+            st.Page(
+                str(PAGINAS / "importar.py"),
+                title="Importar",
+                icon=":material/upload_file:",
+            ),
+        ],
+    }
 
     nav = st.navigation(paginas, position="sidebar")
     nav.run()

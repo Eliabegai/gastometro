@@ -53,7 +53,7 @@ def render_barra_limite(
                 "✕",
                 key=key_excluir,
                 help="Remover limite",
-                use_container_width=True,
+                width="stretch",
             ):
                 ao_excluir()
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 import streamlit as st
 from sqlmodel import select
 
+from analytics.recorrentes import chave_merchant
 from app.estado import (
     CHAVE_MES,
     CHAVE_MODO,
@@ -43,6 +44,7 @@ from db.repository import (
     listar_overrides_dict,
     recategorizar_todos,
     salvar_override,
+    salvar_override_merchant,
 )
 
 MODO_ANUAL = "Ano inteiro"
@@ -130,7 +132,7 @@ def _resumo_categorias(df, rotulo_periodo: str) -> None:
     st.subheader(f"Categorias por gasto {rotulo_periodo}")
     st.dataframe(
         agg,
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
         column_config={
             "Total (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
@@ -154,19 +156,40 @@ def _top_outros_gastos(
         )
         return
 
+    # Agrupa por comerciante: "UBER *TRIP 123" e "UBER *TRIP 456" viram uma
+    # linha só. A descrição exibida é a variante de maior valor.
+    sub = sub.assign(
+        _chave=sub["descricao"].astype(str).map(chave_merchant)
+    )
+    sub["_chave"] = sub["_chave"].where(
+        sub["_chave"] != "", sub["descricao"].astype(str)
+    )
+    exemplos = (
+        sub.sort_values("valor", ascending=False)
+        .drop_duplicates("_chave")
+        .set_index("_chave")["descricao"]
+    )
     agg = (
-        sub.groupby("descricao")["valor"]
-        .agg(soma="sum", qtde="count")
+        sub.groupby("_chave")
+        .agg(
+            soma=("valor", "sum"),
+            qtde=("valor", "count"),
+            variantes=("descricao", "nunique"),
+        )
         .reset_index()
         .sort_values("soma", ascending=False)
         .head(top_n)
     )
+    agg["descricao"] = agg["_chave"].map(exemplos)
+    agg = agg[["descricao", "soma", "qtde", "variantes"]]
 
     categorias = _categorias_disponiveis()
     st.subheader(
         f"Top {len(agg)} 'Outros Gastos' {rotulo_periodo} (categorize rápido)"
     )
     st.caption(
+        "Cada linha é um **comerciante** (variantes de grafia agrupadas): a "
+        "categoria escolhida vale para todas elas. "
         "Escolha a categoria certa e clique em **Salvar overrides** abaixo. "
         "A re-categorização do histórico roda ao final."
     )
@@ -183,6 +206,12 @@ def _top_outros_gastos(
             "qtde": st.column_config.NumberColumn(
                 "Qtde.", disabled=True, width="small"
             ),
+            "variantes": st.column_config.NumberColumn(
+                "Variantes",
+                disabled=True,
+                width="small",
+                help="Grafias diferentes do mesmo comerciante.",
+            ),
             "nova_categoria": st.column_config.SelectboxColumn(
                 "Categoria",
                 options=[""] + categorias,
@@ -190,7 +219,7 @@ def _top_outros_gastos(
             ),
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         key="editor_outros",
     )
 
@@ -201,7 +230,7 @@ def _top_outros_gastos(
             nova = str(row["nova_categoria"]).strip()
             if not descricao or not nova:
                 continue
-            salvar_override(descricao, nova)
+            salvar_override_merchant(descricao, nova)
             salvos += 1
         if salvos == 0:
             st.warning("Nenhuma linha tinha nova categoria preenchida.")
@@ -232,11 +261,15 @@ def _overrides_existentes() -> None:
 
     df = pd.DataFrame(
         [
-            {"Descrição normalizada": d, "Categoria": c}
+            {
+                "Regra": "Comerciante" if d.startswith("m:") else "Descrição exata",
+                "Descrição normalizada": d.removeprefix("m:"),
+                "Categoria": c,
+            }
             for d, c in sorted(overrides.items())
         ]
     )
-    st.dataframe(df, use_container_width=True, hide_index=True, height=300)
+    st.dataframe(df, width="stretch", hide_index=True, height=300)
 
 
 def _adicionar_manual() -> None:
@@ -249,10 +282,18 @@ def _adicionar_manual() -> None:
             placeholder="ex: G B Tucurivi Comercio",
         )
         categoria = st.selectbox("Categoria", options=categorias, index=0)
+        todas_variantes = st.checkbox(
+            "Valer para todas as variantes do comerciante",
+            value=True,
+            help="Desmarque para aplicar só a esta descrição exata.",
+        )
         ok = st.form_submit_button("Adicionar override", type="primary")
 
     if ok and descricao.strip() and categoria:
-        salvar_override(descricao.strip(), categoria)
+        if todas_variantes:
+            salvar_override_merchant(descricao.strip(), categoria)
+        else:
+            salvar_override(descricao.strip(), categoria)
         invalidar_cache()
         with st.spinner("Re-categorizando o histórico…"):
             res = recategorizar_todos()

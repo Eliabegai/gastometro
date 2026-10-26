@@ -111,7 +111,7 @@ def _grafico_historico(df_ano: pd.DataFrame, overrides: dict[str, str]) -> None:
         color_discrete_map={"Casal": "#2563EB", "Pessoal": "#F59E0B"},
     )
     fig.update_layout(yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _grafico_pessoas(df_mes: pd.DataFrame, overrides: dict[str, str]) -> None:
@@ -131,7 +131,7 @@ def _grafico_pessoas(df_mes: pd.DataFrame, overrides: dict[str, str]) -> None:
     )
     fig.update_traces(textposition="outside")
     fig.update_layout(yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _tabelas_categorias(df_mes: pd.DataFrame, overrides: dict[str, str]) -> None:
@@ -147,7 +147,7 @@ def _tabelas_categorias(df_mes: pd.DataFrame, overrides: dict[str, str]) -> None
             st.dataframe(
                 casal.rename(columns={"total": "Total (R$)", "qtde": "Lançamentos"}),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "Total (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
                 },
@@ -163,7 +163,7 @@ def _tabelas_categorias(df_mes: pd.DataFrame, overrides: dict[str, str]) -> None
             st.dataframe(
                 pessoal.rename(columns={"total": "Total (R$)", "qtde": "Lançamentos"}),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 column_config={
                     "Total (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
                 },

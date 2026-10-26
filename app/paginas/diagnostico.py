@@ -20,6 +20,7 @@ from analytics.diagnostico import (
     plano_simples,
     vazamento_anualizavel,
 )
+from analytics.fluxo import meses_previstos, separar_realizado_previsto
 from analytics.orcamento import calcular_progressos
 from app.estado import hidratar_globais, persistir_globais
 from app.helpers import (
@@ -116,7 +117,7 @@ def _card_achado(achado: Achado) -> None:
                 st.dataframe(
                     visivel,
                     hide_index=True,
-                    use_container_width=True,
+                    width="stretch",
                     column_config={
                         "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
                     },
@@ -209,7 +210,7 @@ def _aba_vazamentos(diag) -> None:
             height=max(280, 28 * len(top)),
             showlegend=False,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     tabela = pd.DataFrame(
         [
@@ -227,7 +228,7 @@ def _aba_vazamentos(diag) -> None:
     st.dataframe(
         tabela,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         height=min(480, 80 + 35 * len(tabela)),
         column_config={
             "Custo anual (R$)": st.column_config.NumberColumn(format="R$ %.2f"),
@@ -271,6 +272,17 @@ def render() -> None:
     df = filtrar_por_ano(df, ano)
     if pessoa != OPCAO_TODAS_PESSOAS:
         df = df[df["pessoa"] == pessoa]
+
+    # Meses previstos (planilha, sem fatura) distorcem médias, inflação e
+    # o "último mês" dos tetos — a auditoria olha só o que já aconteceu.
+    previstos = meses_previstos(df)
+    if previstos:
+        df, _ = separar_realizado_previsto(df)
+        st.caption(
+            "Meses previstos ficam de fora da auditoria: "
+            + ", ".join(ref_para_nome_br(m) for m in previstos)
+            + "."
+        )
 
     if df.empty:
         rotulo = f"em **{ano}**" if ano is not None else "no recorte"
